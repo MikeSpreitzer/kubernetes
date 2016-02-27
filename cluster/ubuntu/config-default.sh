@@ -110,5 +110,16 @@ ENABLE_CLUSTER_UI="${KUBE_ENABLE_CLUSTER_UI:-true}"
 # Add envitonment variable separated with blank space like "http_proxy=http://10.x.x.x:8080 https_proxy=https://10.x.x.x:8443"
 PROXY_SETTING=${PROXY_SETTING:-""}
 
+# Optional: if the machine running kube-up is able to open a TCP
+# connection to port 22 but not port 8080 on the machine that will run
+# the apiserver then (1) set LOCAL_APISERVER_TUNNEL_PORT to a port on
+# the kube-up machine and (2) arrange that TCP connections from that
+# machine to 127.0.0.1:$LOCAL_APISERVER_TUNNEL_PORT are tunneled to
+# master:8080.
+
+LOCAL_APISERVER_TUNNEL_PORT=${LOCAL_APISERVER_TUNNEL_PORT:-}
+export LOCAL_APISERVER_TUNNEL_PORT
+
 DEBUG=${DEBUG:-"false"}
+export DEBUG
 

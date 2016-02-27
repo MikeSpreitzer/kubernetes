@@ -119,9 +119,15 @@ if [[ "$KUBERNETES_PROVIDER" == "gke" ]]; then
   detect-project &> /dev/null
 elif [[ "$KUBERNETES_PROVIDER" == "ubuntu" || "$KUBERNETES_PROVIDER" == "juju" ]]; then
   detect-master > /dev/null
-  config=(
-    "--server=http://${KUBE_MASTER_IP}:8080"
-  )
+  if [ -n ${LOCAL_APISERVER_TUNNEL_PORT:-} ]; then
+    config=(
+      "--server=http://127.0.0.1:${LOCAL_APISERVER_TUNNEL_PORT}"
+    )
+  else
+    config=(
+      "--server=http://${KUBE_MASTER_IP}:8080"
+    )
+  fi
 fi
 
 
