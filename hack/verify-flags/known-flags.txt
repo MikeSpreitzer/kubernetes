@@ -265,6 +265,7 @@ minion-path-override
 namespace-sync-period
 network-plugin
 network-plugin-dir
+neutron-endpoint
 no-headers
 no-suggestions
 node-instance-group

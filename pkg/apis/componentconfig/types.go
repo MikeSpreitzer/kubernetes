@@ -337,6 +337,49 @@ type KubeletConfiguration struct {
 	EnableCustomMetrics bool `json:"enableCustomMetrics"`
 }
 
+type NetworkPolicyAgentConfiguration struct {
+	// config is the path to the config file or directory of files
+	Config string `json:"config"`
+	// fileCheckFrequency is the duration between checking config files for
+	// new data
+	FileCheckFrequency unversioned.Duration `json:"fileCheckFrequency"`
+	// address is the IP address for the Network Policy Agent to serve on (set to 0.0.0.0
+	// for all interfaces)
+	Address string `json:"address"`
+	// tLSCertFile is the file containing x509 Certificate for HTTPS.  (CA cert,
+	// if any, concatenated after server cert). If tlsCertFile and
+	// tlsPrivateKeyFile are not provided, a self-signed certificate
+	// and key are generated for the public address and saved to the directory
+	// passed to certDir.
+	TLSCertFile string `json:"tLSCertFile"`
+	// tLSPrivateKeyFile is the ile containing x509 private key matching
+	// tlsCertFile.
+	TLSPrivateKeyFile string `json:"tLSPrivateKeyFile"`
+	// certDirectory is the directory where the TLS certs are located (by
+	// default /var/run/kubernetes). If tlsCertFile and tlsPrivateKeyFile
+	// are provided, this flag will be ignored.
+	CertDirectory string `json:"certDirectory"`
+
+	// NeutronEndpoint is the path to the Neutron endpoint to communicate with.
+	NeutronEndpoint string `json:"dockerEndpoint"`
+
+	// eventRecordQPS is the maximum event creations per second. If 0, there
+	// is no limit enforced.
+	EventRecordQPS float32 `json:"eventRecordQPS"`
+	// eventBurst is the maximum size of a bursty event records, temporarily
+	// allows event records to burst to this number, while still not exceeding
+	// event-qps. Only used if eventQps > 0
+	EventBurst int `json:"eventBurst"`
+	// streamingConnectionIdleTimeout is the maximum time a streaming connection
+	// can be idle before the connection is automatically closed.
+	StreamingConnectionIdleTimeout unversioned.Duration `json:"streamingConnectionIdleTimeout"`
+	// kubeAPIQPS is the QPS to use while talking with kubernetes apiserver
+	KubeAPIQPS float32 `json:"kubeAPIQPS"`
+	// kubeAPIBurst is the burst to allow while talking with kubernetes
+	// apiserver
+	KubeAPIBurst int `json:"kubeAPIBurst"`
+}
+
 type KubeSchedulerConfiguration struct {
 	unversioned.TypeMeta
 
