@@ -35,6 +35,7 @@ kube::golang::server_targets() {
     cmd/kubemark
     cmd/hyperkube
     cmd/linkcheck
+	cmd/netpolagt
     plugin/cmd/kube-scheduler
   )
   if [ -n "${KUBERNETES_CONTRIB:-}" ]; then

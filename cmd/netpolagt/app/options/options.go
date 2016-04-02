@@ -22,12 +22,8 @@ import (
 	_ "net/http/pprof"
 	"time"
 
-	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/apis/componentconfig"
-	"k8s.io/kubernetes/pkg/kubelet/qos"
-	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
-	"k8s.io/kubernetes/pkg/master/ports"
 	"k8s.io/kubernetes/pkg/util"
 
 	"github.com/spf13/pflag"
@@ -65,18 +61,10 @@ func NewNetworkPolicyAgent() *NetworkPolicyAgent {
 			CertDirectory:                  "/var/run/kubernetes",
 			EventBurst:                     10,
 			EventRecordQPS:                 5.0,
-			EnableCustomMetrics:            false,
-			EnableDebuggingHandlers:        true,
-			EnableServer:                   true,
 			FileCheckFrequency:             unversioned.Duration{20 * time.Second},
-			HTTPCheckFrequency:             unversioned.Duration{20 * time.Second},
-			MasterServiceNamespace:         api.NamespaceDefault,
-			NodeStatusUpdateFrequency:      unversioned.Duration{10 * time.Second},
-			LockFilePath:                   "",
 			StreamingConnectionIdleTimeout: unversioned.Duration{4 * time.Hour},
 			KubeAPIQPS:                     5.0,
 			KubeAPIBurst:                   10,
-			BabysitDaemons:                 false,
 		},
 	}
 }
