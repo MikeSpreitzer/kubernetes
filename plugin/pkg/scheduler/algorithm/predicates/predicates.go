@@ -410,9 +410,9 @@ func (c *VolumeZoneChecker) predicate(pod *v1.Pod, meta algorithm.PredicateMetad
 	}
 
 	namespace := pod.Namespace
-	manifest := &(pod.Spec)
-	for i := range manifest.Volumes {
-		volume := &manifest.Volumes[i]
+	volumes := pod.Spec.Volumes
+	for i := range volumes {
+		volume := &volumes[i]
 		if volume.PersistentVolumeClaim != nil {
 			pvcName := volume.PersistentVolumeClaim.ClaimName
 			if pvcName == "" {
@@ -1389,9 +1389,9 @@ func (c *VolumeNodeChecker) predicate(pod *v1.Pod, meta algorithm.PredicateMetad
 
 	glog.V(2).Infof("Checking for prebound volumes with node affinity")
 	namespace := pod.Namespace
-	manifest := &(pod.Spec)
-	for i := range manifest.Volumes {
-		volume := &manifest.Volumes[i]
+	volumes := pod.Spec.Volumes
+	for i := range volumes {
+		volume := &volumes[i]
 		if volume.PersistentVolumeClaim == nil {
 			continue
 		}
