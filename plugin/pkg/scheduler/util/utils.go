@@ -25,11 +25,11 @@ import (
 
 // GetUsedPorts returns the used host ports of Pods: if 'port' was used, a 'port:true' pair
 // will be in the result; but it does not resolve port conflict.
-func GetUsedPorts(pods ...*v1.Pod) map[int]bool {
+func GetUsedPorts(pods ...v1.Placeable) map[int]bool {
 	ports := make(map[int]bool)
 	for _, pod := range pods {
-		for j := range pod.Spec.Containers {
-			container := &pod.Spec.Containers[j]
+		for j := range pod.GetContainers() {
+			container := &pod.GetContainers()[j]
 			for k := range container.Ports {
 				podPort := &container.Ports[k]
 				// "0" is explicitly ignored in PodFitsHostPorts,
@@ -44,16 +44,16 @@ func GetUsedPorts(pods ...*v1.Pod) map[int]bool {
 }
 
 // GetPodFullName returns a name that uniquely identifies a pod.
-func GetPodFullName(pod *v1.Pod) string {
+func GetPodFullName(pod v1.Placeable) string {
 	// Use underscore as the delimiter because it is not allowed in pod name
 	// (DNS subdomain format).
-	return pod.Name + "_" + pod.Namespace
+	return pod.GetName() + "_" + pod.GetNamespace()
 }
 
 // GetPodPriority return priority of the given pod.
-func GetPodPriority(pod *v1.Pod) int32 {
-	if pod.Spec.Priority != nil {
-		return *pod.Spec.Priority
+func GetPodPriority(pod v1.Placeable) int32 {
+	if pod.GetPriority() != nil {
+		return *pod.GetPriority()
 	}
 	// When priority of a running pod is nil, it means it was created at a time
 	// that there was no global default priority class and the priority class
@@ -93,5 +93,5 @@ func (l *SortableList) Sort() {
 // the second one. It takes arguments of the type "interface{}" to be used with
 // SortableList, but expects those arguments to be *v1.Pod.
 func HigherPriorityPod(pod1, pod2 interface{}) bool {
-	return GetPodPriority(pod1.(*v1.Pod)) > GetPodPriority(pod2.(*v1.Pod))
+	return GetPodPriority(pod1.(v1.Placeable)) > GetPodPriority(pod2.(v1.Placeable))
 }

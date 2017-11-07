@@ -43,14 +43,14 @@ type matchingPodAntiAffinityTerm struct {
 // NOTE: When new fields are added/removed or logic is changed, please make sure that
 // RemovePod, AddPod, and ShallowCopy functions are updated to work with the new changes.
 type predicateMetadata struct {
-	pod           *v1.Pod
+	pod           v1.Placeable
 	podBestEffort bool
 	podRequest    *schedulercache.Resource
 	podPorts      map[int]bool
 	//key is a pod full name with the anti-affinity rules.
 	matchingAntiAffinityTerms          map[string][]matchingPodAntiAffinityTerm
 	serviceAffinityInUse               bool
-	serviceAffinityMatchingPodList     []*v1.Pod
+	serviceAffinityMatchingPodList     []v1.Placeable
 	serviceAffinityMatchingPodServices []*v1.Service
 }
 
@@ -77,7 +77,7 @@ func NewPredicateMetadataFactory(podLister algorithm.PodLister) algorithm.Predic
 }
 
 // GetMetadata returns the predicateMetadata used which will be used by various predicates.
-func (pfactory *PredicateMetadataFactory) GetMetadata(pod *v1.Pod, nodeNameToInfoMap map[string]*schedulercache.NodeInfo) algorithm.PredicateMetadata {
+func (pfactory *PredicateMetadataFactory) GetMetadata(pod v1.Placeable, nodeNameToInfoMap map[string]*schedulercache.NodeInfo) algorithm.PredicateMetadata {
 	// If we cannot compute metadata, just return nil
 	if pod == nil {
 		return nil
@@ -102,7 +102,7 @@ func (pfactory *PredicateMetadataFactory) GetMetadata(pod *v1.Pod, nodeNameToInf
 
 // RemovePod changes predicateMetadata assuming that the given `deletedPod` is
 // deleted from the system.
-func (meta *predicateMetadata) RemovePod(deletedPod *v1.Pod) error {
+func (meta *predicateMetadata) RemovePod(deletedPod v1.Placeable) error {
 	deletedPodFullName := schedutil.GetPodFullName(deletedPod)
 	if deletedPodFullName == schedutil.GetPodFullName(meta.pod) {
 		return fmt.Errorf("deletedPod and meta.pod must not be the same.")
@@ -114,7 +114,7 @@ func (meta *predicateMetadata) RemovePod(deletedPod *v1.Pod) error {
 	// deletedPod, we don't need to check the list, as deletedPod isn't in the list.
 	if meta.serviceAffinityInUse &&
 		len(meta.serviceAffinityMatchingPodList) > 0 &&
-		deletedPod.Namespace == meta.serviceAffinityMatchingPodList[0].Namespace {
+		deletedPod.GetNamespace() == meta.serviceAffinityMatchingPodList[0].GetNamespace() {
 		for i, pod := range meta.serviceAffinityMatchingPodList {
 			if schedutil.GetPodFullName(pod) == deletedPodFullName {
 				meta.serviceAffinityMatchingPodList = append(
@@ -129,7 +129,7 @@ func (meta *predicateMetadata) RemovePod(deletedPod *v1.Pod) error {
 
 // AddPod changes predicateMetadata assuming that `newPod` is added to the
 // system.
-func (meta *predicateMetadata) AddPod(addedPod *v1.Pod, nodeInfo *schedulercache.NodeInfo) error {
+func (meta *predicateMetadata) AddPod(addedPod v1.Placeable, nodeInfo *schedulercache.NodeInfo) error {
 	addedPodFullName := schedutil.GetPodFullName(addedPod)
 	if addedPodFullName == schedutil.GetPodFullName(meta.pod) {
 		return fmt.Errorf("addedPod and meta.pod must not be the same.")
@@ -153,9 +153,9 @@ func (meta *predicateMetadata) AddPod(addedPod *v1.Pod, nodeInfo *schedulercache
 	}
 	// If addedPod is in the same namespace as the meta.pod, update the list
 	// of matching pods if applicable.
-	if meta.serviceAffinityInUse && addedPod.Namespace == meta.pod.Namespace {
-		selector := CreateSelectorFromLabels(meta.pod.Labels)
-		if selector.Matches(labels.Set(addedPod.Labels)) {
+	if meta.serviceAffinityInUse && addedPod.GetNamespace() == meta.pod.GetNamespace() {
+		selector := CreateSelectorFromLabels(meta.pod.GetLabels())
+		if selector.Matches(labels.Set(addedPod.GetLabels())) {
 			meta.serviceAffinityMatchingPodList = append(meta.serviceAffinityMatchingPodList,
 				addedPod)
 		}
@@ -182,7 +182,7 @@ func (meta *predicateMetadata) ShallowCopy() algorithm.PredicateMetadata {
 	}
 	newPredMeta.serviceAffinityMatchingPodServices = append([]*v1.Service(nil),
 		meta.serviceAffinityMatchingPodServices...)
-	newPredMeta.serviceAffinityMatchingPodList = append([]*v1.Pod(nil),
+	newPredMeta.serviceAffinityMatchingPodList = append([]v1.Placeable(nil),
 		meta.serviceAffinityMatchingPodList...)
 	return (algorithm.PredicateMetadata)(newPredMeta)
 }

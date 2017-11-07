@@ -21,7 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 )
 
-type PodFilter func(*v1.Pod) bool
+type PodFilter func(v1.Placeable) bool
 
 // Cache collects pods' information and provides node-level aggregated information.
 // It's intended for generic scheduler to do efficient lookup.
@@ -61,23 +61,23 @@ type Cache interface {
 	// AssumePod assumes a pod scheduled and aggregates the pod's information into its node.
 	// The implementation also decides the policy to expire pod before being confirmed (receiving Add event).
 	// After expiration, its information would be subtracted.
-	AssumePod(pod *v1.Pod) error
+	AssumePod(pod v1.Placeable) error
 
 	// FinishBinding signals that cache for assumed pod can be expired
-	FinishBinding(pod *v1.Pod) error
+	FinishBinding(pod v1.Placeable) error
 
 	// ForgetPod removes an assumed pod from cache.
-	ForgetPod(pod *v1.Pod) error
+	ForgetPod(pod v1.Placeable) error
 
 	// AddPod either confirms a pod if it's assumed, or adds it back if it's expired.
 	// If added back, the pod's information would be added again.
-	AddPod(pod *v1.Pod) error
+	AddPod(pod v1.Placeable) error
 
 	// UpdatePod removes oldPod's information and adds newPod's information.
-	UpdatePod(oldPod, newPod *v1.Pod) error
+	UpdatePod(oldPod, newPod v1.Placeable) error
 
 	// RemovePod removes a pod. The pod's information would be subtracted from assigned node.
-	RemovePod(pod *v1.Pod) error
+	RemovePod(pod v1.Placeable) error
 
 	// AddNode adds overall information about node.
 	AddNode(node *v1.Node) error
@@ -94,8 +94,8 @@ type Cache interface {
 	UpdateNodeNameToInfoMap(infoMap map[string]*NodeInfo) error
 
 	// List lists all cached pods (including assumed ones).
-	List(labels.Selector) ([]*v1.Pod, error)
+	List(labels.Selector) ([]v1.Placeable, error)
 
 	// FilteredList returns all cached pods that pass the filter.
-	FilteredList(filter PodFilter, selector labels.Selector) ([]*v1.Pod, error)
+	FilteredList(filter PodFilter, selector labels.Selector) ([]v1.Placeable, error)
 }

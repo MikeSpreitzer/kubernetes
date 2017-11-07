@@ -65,12 +65,12 @@ func (fc *FakeConfigurator) GetSchedulerName() string {
 }
 
 // MakeDefaultErrorFunc is not implemented yet.
-func (fc *FakeConfigurator) MakeDefaultErrorFunc(backoff *util.PodBackoff, podQueue *cache.FIFO) func(pod *v1.Pod, err error) {
+func (fc *FakeConfigurator) MakeDefaultErrorFunc(backoff *util.PodBackoff, podQueue *cache.FIFO) func(pod v1.Placeable, err error) {
 	return nil
 }
 
 // ResponsibleForPod is not implemented yet.
-func (fc *FakeConfigurator) ResponsibleForPod(pod *v1.Pod) bool {
+func (fc *FakeConfigurator) ResponsibleForPod(pod v1.Placeable) bool {
 	panic("not implemented")
 }
 

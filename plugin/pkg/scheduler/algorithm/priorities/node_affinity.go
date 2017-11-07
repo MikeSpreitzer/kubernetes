@@ -33,7 +33,7 @@ import (
 // it will a get an add of preferredSchedulingTerm.Weight. Thus, the more preferredSchedulingTerms
 // the node satisfies and the more the preferredSchedulingTerm that is satisfied weights, the higher
 // score the node gets.
-func CalculateNodeAffinityPriorityMap(pod *v1.Pod, meta interface{}, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error) {
+func CalculateNodeAffinityPriorityMap(pod v1.Placeable, meta interface{}, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error) {
 	node := nodeInfo.Node()
 	if node == nil {
 		return schedulerapi.HostPriority{}, fmt.Errorf("node not found")
@@ -44,7 +44,7 @@ func CalculateNodeAffinityPriorityMap(pod *v1.Pod, meta interface{}, nodeInfo *s
 		affinity = priorityMeta.affinity
 	} else {
 		// We couldn't parse metadata - fallback to the podspec.
-		affinity = pod.Spec.Affinity
+		affinity = pod.GetAffinity()
 	}
 
 	var count int32
@@ -76,7 +76,7 @@ func CalculateNodeAffinityPriorityMap(pod *v1.Pod, meta interface{}, nodeInfo *s
 	}, nil
 }
 
-func CalculateNodeAffinityPriorityReduce(pod *v1.Pod, meta interface{}, nodeNameToInfo map[string]*schedulercache.NodeInfo, result schedulerapi.HostPriorityList) error {
+func CalculateNodeAffinityPriorityReduce(pod v1.Placeable, meta interface{}, nodeNameToInfo map[string]*schedulercache.NodeInfo, result schedulerapi.HostPriorityList) error {
 	var maxCount int
 	for i := range result {
 		if result[i].Score > maxCount {
@@ -95,7 +95,7 @@ func CalculateNodeAffinityPriorityReduce(pod *v1.Pod, meta interface{}, nodeName
 		if glog.V(10) {
 			// We explicitly don't do glog.V(10).Infof() to avoid computing all the parameters if this is
 			// not logged. There is visible performance gain from it.
-			glog.Infof("%v -> %v: NodeAffinityPriority, Score: (%d)", pod.Name, result[i].Host, int(fScore))
+			glog.Infof("%v -> %v: NodeAffinityPriority, Score: (%d)", pod.GetName(), result[i].Host, int(fScore))
 		}
 		result[i].Score = int(fScore)
 	}

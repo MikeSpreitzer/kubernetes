@@ -30,7 +30,7 @@ import (
 // It calculates the percentage of memory and CPU requested by pods scheduled on the node, and prioritizes
 // based on the minimum of the average of the fraction of requested to capacity.
 // Details: cpu((capacity - sum(requested)) * 10 / capacity) + memory((capacity - sum(requested)) * 10 / capacity) / 2
-func LeastRequestedPriorityMap(pod *v1.Pod, meta interface{}, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error) {
+func LeastRequestedPriorityMap(pod v1.Placeable, meta interface{}, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error) {
 	var nonZeroRequest *schedulercache.Resource
 	if priorityMeta, ok := meta.(*priorityMetadata); ok {
 		nonZeroRequest = priorityMeta.nonZeroRequest
@@ -59,7 +59,7 @@ func calculateUnusedScore(requested int64, capacity int64, node string) int64 {
 // Calculates host priority based on the amount of unused resources.
 // 'node' has information about the resources on the node.
 // 'pods' is a list of pods currently scheduled on the node.
-func calculateUnusedPriority(pod *v1.Pod, podRequests *schedulercache.Resource, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error) {
+func calculateUnusedPriority(pod v1.Placeable, podRequests *schedulercache.Resource, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error) {
 	node := nodeInfo.Node()
 	if node == nil {
 		return schedulerapi.HostPriority{}, fmt.Errorf("node not found")
@@ -77,7 +77,7 @@ func calculateUnusedPriority(pod *v1.Pod, podRequests *schedulercache.Resource, 
 		// not logged. There is visible performance gain from it.
 		glog.V(10).Infof(
 			"%v -> %v: Least Requested Priority, capacity %d millicores %d memory bytes, total request %d millicores %d memory bytes, score %d CPU %d memory",
-			pod.Name, node.Name,
+			pod.GetName(), node.Name,
 			allocatableResources.MilliCPU, allocatableResources.Memory,
 			totalResources.MilliCPU, totalResources.Memory,
 			cpuScore, memoryScore,

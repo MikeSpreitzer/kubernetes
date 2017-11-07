@@ -97,7 +97,7 @@ func NewHTTPExtender(config *schedulerapi.ExtenderConfig) (algorithm.SchedulerEx
 // Filter based on extender implemented predicate functions. The filtered list is
 // expected to be a subset of the supplied list. failedNodesMap optionally contains
 // the list of failed nodes and failure reasons.
-func (h *HTTPExtender) Filter(pod *v1.Pod, nodes []*v1.Node, nodeNameToInfo map[string]*schedulercache.NodeInfo) ([]*v1.Node, schedulerapi.FailedNodesMap, error) {
+func (h *HTTPExtender) Filter(pod v1.Placeable, nodes []*v1.Node, nodeNameToInfo map[string]*schedulercache.NodeInfo) ([]*v1.Node, schedulerapi.FailedNodesMap, error) {
 	var (
 		result     schedulerapi.ExtenderFilterResult
 		nodeList   *v1.NodeList
@@ -124,7 +124,7 @@ func (h *HTTPExtender) Filter(pod *v1.Pod, nodes []*v1.Node, nodeNameToInfo map[
 	}
 
 	args = &schedulerapi.ExtenderArgs{
-		Pod:       *pod,
+		Pod:       *pod.(*v1.Pod),
 		Nodes:     nodeList,
 		NodeNames: nodeNames,
 	}
@@ -154,7 +154,7 @@ func (h *HTTPExtender) Filter(pod *v1.Pod, nodes []*v1.Node, nodeNameToInfo map[
 // Prioritize based on extender implemented priority functions. Weight*priority is added
 // up for each such priority function. The returned score is added to the score computed
 // by Kubernetes scheduler. The total score is used to do the host selection.
-func (h *HTTPExtender) Prioritize(pod *v1.Pod, nodes []*v1.Node) (*schedulerapi.HostPriorityList, int, error) {
+func (h *HTTPExtender) Prioritize(pod v1.Placeable, nodes []*v1.Node) (*schedulerapi.HostPriorityList, int, error) {
 	var (
 		result    schedulerapi.HostPriorityList
 		nodeList  *v1.NodeList
@@ -184,7 +184,7 @@ func (h *HTTPExtender) Prioritize(pod *v1.Pod, nodes []*v1.Node) (*schedulerapi.
 	}
 
 	args = &schedulerapi.ExtenderArgs{
-		Pod:       *pod,
+		Pod:       *pod.(*v1.Pod),
 		Nodes:     nodeList,
 		NodeNames: nodeNames,
 	}

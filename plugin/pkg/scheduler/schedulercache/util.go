@@ -20,10 +20,10 @@ import "k8s.io/api/core/v1"
 
 // CreateNodeNameToInfoMap obtains a list of pods and pivots that list into a map where the keys are node names
 // and the values are the aggregated information for that node.
-func CreateNodeNameToInfoMap(pods []*v1.Pod, nodes []*v1.Node) map[string]*NodeInfo {
+func CreateNodeNameToInfoMap(pods []v1.Placeable, nodes []*v1.Node) map[string]*NodeInfo {
 	nodeNameToInfo := make(map[string]*NodeInfo)
 	for _, pod := range pods {
-		nodeName := pod.Spec.NodeName
+		nodeName := pod.GetNodeName()
 		if _, ok := nodeNameToInfo[nodeName]; !ok {
 			nodeNameToInfo[nodeName] = NewNodeInfo()
 		}

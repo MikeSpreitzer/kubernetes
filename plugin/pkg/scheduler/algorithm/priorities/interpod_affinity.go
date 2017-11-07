@@ -84,7 +84,7 @@ func (p *podAffinityPriorityMap) setError(err error) {
 	}
 }
 
-func (p *podAffinityPriorityMap) processTerm(term *v1.PodAffinityTerm, podDefiningAffinityTerm, podToCheck *v1.Pod, fixedNode *v1.Node, weight float64) {
+func (p *podAffinityPriorityMap) processTerm(term *v1.PodAffinityTerm, podDefiningAffinityTerm, podToCheck v1.Placeable, fixedNode *v1.Node, weight float64) {
 	namespaces := priorityutil.GetNamespacesFromPodAffinityTerm(podDefiningAffinityTerm, term)
 	selector, err := metav1.LabelSelectorAsSelector(term.LabelSelector)
 	if err != nil {
@@ -105,7 +105,7 @@ func (p *podAffinityPriorityMap) processTerm(term *v1.PodAffinityTerm, podDefini
 	}
 }
 
-func (p *podAffinityPriorityMap) processTerms(terms []v1.WeightedPodAffinityTerm, podDefiningAffinityTerm, podToCheck *v1.Pod, fixedNode *v1.Node, multiplier int) {
+func (p *podAffinityPriorityMap) processTerms(terms []v1.WeightedPodAffinityTerm, podDefiningAffinityTerm, podToCheck v1.Placeable, fixedNode *v1.Node, multiplier int) {
 	for i := range terms {
 		term := &terms[i]
 		p.processTerm(&term.PodAffinityTerm, podDefiningAffinityTerm, podToCheck, fixedNode, float64(term.Weight*int32(multiplier)))
@@ -117,8 +117,8 @@ func (p *podAffinityPriorityMap) processTerms(terms []v1.WeightedPodAffinityTerm
 // that node; the node(s) with the highest sum are the most preferred.
 // Symmetry need to be considered for preferredDuringSchedulingIgnoredDuringExecution from podAffinity & podAntiAffinity,
 // symmetry need to be considered for hard requirements from podAffinity
-func (ipa *InterPodAffinity) CalculateInterPodAffinityPriority(pod *v1.Pod, nodeNameToInfo map[string]*schedulercache.NodeInfo, nodes []*v1.Node) (schedulerapi.HostPriorityList, error) {
-	affinity := pod.Spec.Affinity
+func (ipa *InterPodAffinity) CalculateInterPodAffinityPriority(pod v1.Placeable, nodeNameToInfo map[string]*schedulercache.NodeInfo, nodes []*v1.Node) (schedulerapi.HostPriorityList, error) {
+	affinity := pod.GetAffinity()
 	hasAffinityConstraints := affinity != nil && affinity.PodAffinity != nil
 	hasAntiAffinityConstraints := affinity != nil && affinity.PodAntiAffinity != nil
 
@@ -134,12 +134,12 @@ func (ipa *InterPodAffinity) CalculateInterPodAffinityPriority(pod *v1.Pod, node
 	// the node.
 	pm := newPodAffinityPriorityMap(nodes)
 
-	processPod := func(existingPod *v1.Pod) error {
-		existingPodNode, err := ipa.info.GetNodeInfo(existingPod.Spec.NodeName)
+	processPod := func(existingPod v1.Placeable) error {
+		existingPodNode, err := ipa.info.GetNodeInfo(existingPod.GetNodeName())
 		if err != nil {
 			return err
 		}
-		existingPodAffinity := existingPod.Spec.Affinity
+		existingPodAffinity := existingPod.GetAffinity()
 		existingHasAffinityConstraints := existingPodAffinity != nil && existingPodAffinity.PodAffinity != nil
 		existingHasAntiAffinityConstraints := existingPodAffinity != nil && existingPodAffinity.PodAntiAffinity != nil
 
@@ -231,7 +231,7 @@ func (ipa *InterPodAffinity) CalculateInterPodAffinityPriority(pod *v1.Pod, node
 		if glog.V(10) {
 			// We explicitly don't do glog.V(10).Infof() to avoid computing all the parameters if this is
 			// not logged. There is visible performance gain from it.
-			glog.V(10).Infof("%v -> %v: InterPodAffinityPriority, Score: (%d)", pod.Name, node.Name, int(fScore))
+			glog.V(10).Infof("%v -> %v: InterPodAffinityPriority, Score: (%d)", pod.GetName(), node.Name, int(fScore))
 		}
 	}
 	return result, nil

@@ -29,15 +29,15 @@ type priorityMetadata struct {
 }
 
 // PriorityMetadata is a MetadataProducer.  Node info can be nil.
-func PriorityMetadata(pod *v1.Pod, nodeNameToInfo map[string]*schedulercache.NodeInfo) interface{} {
+func PriorityMetadata(pod v1.Placeable, nodeNameToInfo map[string]*schedulercache.NodeInfo) interface{} {
 	// If we cannot compute metadata, just return nil
 	if pod == nil {
 		return nil
 	}
-	tolerationsPreferNoSchedule := getAllTolerationPreferNoSchedule(pod.Spec.Tolerations)
+	tolerationsPreferNoSchedule := getAllTolerationPreferNoSchedule(pod.GetTolerations())
 	return &priorityMetadata{
 		nonZeroRequest: getNonZeroRequests(pod),
 		podTolerations: tolerationsPreferNoSchedule,
-		affinity:       pod.Spec.Affinity,
+		affinity:       pod.GetAffinity(),
 	}
 }

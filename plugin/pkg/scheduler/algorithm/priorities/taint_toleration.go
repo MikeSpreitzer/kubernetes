@@ -54,7 +54,7 @@ func getAllTolerationPreferNoSchedule(tolerations []v1.Toleration) (tolerationLi
 }
 
 // ComputeTaintTolerationPriorityMap prepares the priority list for all the nodes based on the number of intolerable taints on the node
-func ComputeTaintTolerationPriorityMap(pod *v1.Pod, meta interface{}, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error) {
+func ComputeTaintTolerationPriorityMap(pod v1.Placeable, meta interface{}, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error) {
 	node := nodeInfo.Node()
 	if node == nil {
 		return schedulerapi.HostPriority{}, fmt.Errorf("node not found")
@@ -65,7 +65,7 @@ func ComputeTaintTolerationPriorityMap(pod *v1.Pod, meta interface{}, nodeInfo *
 		tolerationsPreferNoSchedule = priorityMeta.podTolerations
 
 	} else {
-		tolerationsPreferNoSchedule = getAllTolerationPreferNoSchedule(pod.Spec.Tolerations)
+		tolerationsPreferNoSchedule = getAllTolerationPreferNoSchedule(pod.GetTolerations())
 	}
 
 	return schedulerapi.HostPriority{
@@ -75,7 +75,7 @@ func ComputeTaintTolerationPriorityMap(pod *v1.Pod, meta interface{}, nodeInfo *
 }
 
 // ComputeTaintTolerationPriorityReduce calculates the source of each node based on the number of intolerable taints on the node
-func ComputeTaintTolerationPriorityReduce(pod *v1.Pod, meta interface{}, nodeNameToInfo map[string]*schedulercache.NodeInfo, result schedulerapi.HostPriorityList) error {
+func ComputeTaintTolerationPriorityReduce(pod v1.Placeable, meta interface{}, nodeNameToInfo map[string]*schedulercache.NodeInfo, result schedulerapi.HostPriorityList) error {
 	var maxCount int
 	for i := range result {
 		if result[i].Score > maxCount {
@@ -92,7 +92,7 @@ func ComputeTaintTolerationPriorityReduce(pod *v1.Pod, meta interface{}, nodeNam
 		if glog.V(10) {
 			// We explicitly don't do glog.V(10).Infof() to avoid computing all the parameters if this is
 			// not logged. There is visible performance gain from it.
-			glog.Infof("%v -> %v: Taint Toleration Priority, Score: (%d)", pod.Name, result[i].Host, int(fScore))
+			glog.Infof("%v -> %v: Taint Toleration Priority, Score: (%d)", pod.GetName(), result[i].Host, int(fScore))
 		}
 		result[i].Score = int(fScore)
 	}

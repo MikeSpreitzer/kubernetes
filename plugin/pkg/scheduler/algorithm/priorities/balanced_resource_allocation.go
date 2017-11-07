@@ -37,10 +37,10 @@ const (
 
 // Also used in most/least_requested nad metadata.
 // TODO: despaghettify it
-func getNonZeroRequests(pod *v1.Pod) *schedulercache.Resource {
+func getNonZeroRequests(pod v1.Placeable) *schedulercache.Resource {
 	result := &schedulercache.Resource{}
-	for i := range pod.Spec.Containers {
-		container := &pod.Spec.Containers[i]
+	for i := range pod.GetContainers() {
+		container := &pod.GetContainers()[i]
 		cpu, memory := priorityutil.GetNonzeroRequests(&container.Resources.Requests)
 		result.MilliCPU += cpu
 		result.Memory += memory
@@ -48,7 +48,7 @@ func getNonZeroRequests(pod *v1.Pod) *schedulercache.Resource {
 	return result
 }
 
-func calculateBalancedResourceAllocation(pod *v1.Pod, podRequests *schedulercache.Resource, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error) {
+func calculateBalancedResourceAllocation(pod v1.Placeable, podRequests *schedulercache.Resource, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error) {
 	node := nodeInfo.Node()
 	if node == nil {
 		return schedulerapi.HostPriority{}, fmt.Errorf("node not found")
@@ -78,7 +78,7 @@ func calculateBalancedResourceAllocation(pod *v1.Pod, podRequests *schedulercach
 		// not logged. There is visible performance gain from it.
 		glog.V(10).Infof(
 			"%v -> %v: Balanced Resource Allocation, capacity %d millicores %d memory bytes, total request %d millicores %d memory bytes, score %d",
-			pod.Name, node.Name,
+			pod.GetName(), node.Name,
 			allocatableResources.MilliCPU, allocatableResources.Memory,
 			totalResources.MilliCPU, totalResources.Memory,
 			score,
@@ -104,7 +104,7 @@ func fractionOfCapacity(requested, capacity int64) float64 {
 // close the two metrics are to each other.
 // Detail: score = 10 - abs(cpuFraction-memoryFraction)*10. The algorithm is partly inspired by:
 // "Wei Huang et al. An Energy Efficient Virtual Machine Placement Algorithm with Balanced Resource Utilization"
-func BalancedResourceAllocationMap(pod *v1.Pod, meta interface{}, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error) {
+func BalancedResourceAllocationMap(pod v1.Placeable, meta interface{}, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error) {
 	var nonZeroRequest *schedulercache.Resource
 	if priorityMeta, ok := meta.(*priorityMetadata); ok {
 		nonZeroRequest = priorityMeta.nonZeroRequest
