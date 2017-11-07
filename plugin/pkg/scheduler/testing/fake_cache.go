@@ -24,27 +24,27 @@ import (
 
 // FakeCache is used for testing
 type FakeCache struct {
-	AssumeFunc func(*v1.Pod)
-	ForgetFunc func(*v1.Pod)
+	AssumeFunc func(v1.Placeable)
+	ForgetFunc func(v1.Placeable)
 }
 
-func (f *FakeCache) AssumePod(pod *v1.Pod) error {
+func (f *FakeCache) AssumePod(pod v1.Placeable) error {
 	f.AssumeFunc(pod)
 	return nil
 }
 
-func (f *FakeCache) FinishBinding(pod *v1.Pod) error { return nil }
+func (f *FakeCache) FinishBinding(pod v1.Placeable) error { return nil }
 
-func (f *FakeCache) ForgetPod(pod *v1.Pod) error {
+func (f *FakeCache) ForgetPod(pod v1.Placeable) error {
 	f.ForgetFunc(pod)
 	return nil
 }
 
-func (f *FakeCache) AddPod(pod *v1.Pod) error { return nil }
+func (f *FakeCache) AddPod(pod v1.Placeable) error { return nil }
 
-func (f *FakeCache) UpdatePod(oldPod, newPod *v1.Pod) error { return nil }
+func (f *FakeCache) UpdatePod(oldPod, newPod v1.Placeable) error { return nil }
 
-func (f *FakeCache) RemovePod(pod *v1.Pod) error { return nil }
+func (f *FakeCache) RemovePod(pod v1.Placeable) error { return nil }
 
 func (f *FakeCache) AddNode(node *v1.Node) error { return nil }
 
@@ -56,8 +56,8 @@ func (f *FakeCache) UpdateNodeNameToInfoMap(infoMap map[string]*schedulercache.N
 	return nil
 }
 
-func (f *FakeCache) List(s labels.Selector) ([]*v1.Pod, error) { return nil, nil }
+func (f *FakeCache) List(s labels.Selector) ([]v1.Placeable, error) { return nil, nil }
 
-func (f *FakeCache) FilteredList(filter schedulercache.PodFilter, selector labels.Selector) ([]*v1.Pod, error) {
+func (f *FakeCache) FilteredList(filter schedulercache.PodFilter, selector labels.Selector) ([]v1.Placeable, error) {
 	return nil, nil
 }

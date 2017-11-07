@@ -29,15 +29,15 @@ import (
 // based on the total size of those images.
 // - If none of the images are present, this node will be given the lowest priority.
 // - If some of the images are present on a node, the larger their sizes' sum, the higher the node's priority.
-func ImageLocalityPriorityMap(pod *v1.Pod, meta interface{}, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error) {
+func ImageLocalityPriorityMap(pod v1.Placeable, meta interface{}, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error) {
 	node := nodeInfo.Node()
 	if node == nil {
 		return schedulerapi.HostPriority{}, fmt.Errorf("node not found")
 	}
 
 	var sumSize int64
-	for i := range pod.Spec.Containers {
-		sumSize += checkContainerImageOnNode(node, &pod.Spec.Containers[i])
+	for i := range pod.GetContainers() {
+		sumSize += checkContainerImageOnNode(node, &pod.GetContainers()[i])
 	}
 	return schedulerapi.HostPriority{
 		Host:  node.Name,

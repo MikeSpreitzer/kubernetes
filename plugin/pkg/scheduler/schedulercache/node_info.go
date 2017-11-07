@@ -36,8 +36,8 @@ type NodeInfo struct {
 	// Overall node information.
 	node *v1.Node
 
-	pods             []*v1.Pod
-	podsWithAffinity []*v1.Pod
+	pods             []v1.Placeable
+	podsWithAffinity []v1.Placeable
 	usedPorts        map[int]bool
 
 	// Total requested resource of all pods on this node.
@@ -178,7 +178,7 @@ func (r *Resource) SetHugePages(name v1.ResourceName, quantity int64) {
 // NewNodeInfo returns a ready to use empty NodeInfo object.
 // If any pods are given in arguments, their information will be aggregated in
 // the returned object.
-func NewNodeInfo(pods ...*v1.Pod) *NodeInfo {
+func NewNodeInfo(pods ...v1.Placeable) *NodeInfo {
 	ni := &NodeInfo{
 		requestedResource:   &Resource{},
 		nonzeroRequest:      &Resource{},
@@ -201,7 +201,7 @@ func (n *NodeInfo) Node() *v1.Node {
 }
 
 // Pods return all pods scheduled (including assumed to be) on this node.
-func (n *NodeInfo) Pods() []*v1.Pod {
+func (n *NodeInfo) Pods() []v1.Placeable {
 	if n == nil {
 		return nil
 	}
@@ -216,7 +216,7 @@ func (n *NodeInfo) UsedPorts() map[int]bool {
 }
 
 // PodsWithAffinity return all pods with (anti)affinity constraints on this node.
-func (n *NodeInfo) PodsWithAffinity() []*v1.Pod {
+func (n *NodeInfo) PodsWithAffinity() []v1.Placeable {
 	if n == nil {
 		return nil
 	}
@@ -288,7 +288,7 @@ func (n *NodeInfo) Clone() *NodeInfo {
 		generation:              n.generation,
 	}
 	if len(n.pods) > 0 {
-		clone.pods = append([]*v1.Pod(nil), n.pods...)
+		clone.pods = append([]v1.Placeable(nil), n.pods...)
 	}
 	if len(n.usedPorts) > 0 {
 		for k, v := range n.usedPorts {
@@ -296,7 +296,7 @@ func (n *NodeInfo) Clone() *NodeInfo {
 		}
 	}
 	if len(n.podsWithAffinity) > 0 {
-		clone.podsWithAffinity = append([]*v1.Pod(nil), n.podsWithAffinity...)
+		clone.podsWithAffinity = append([]v1.Placeable(nil), n.podsWithAffinity...)
 	}
 	if len(n.taints) > 0 {
 		clone.taints = append([]v1.Taint(nil), n.taints...)
@@ -308,19 +308,19 @@ func (n *NodeInfo) Clone() *NodeInfo {
 func (n *NodeInfo) String() string {
 	podKeys := make([]string, len(n.pods))
 	for i, pod := range n.pods {
-		podKeys[i] = pod.Name
+		podKeys[i] = pod.GetName()
 	}
 	return fmt.Sprintf("&NodeInfo{Pods:%v, RequestedResource:%#v, NonZeroRequest: %#v, UsedPort: %#v, AllocatableResource:%#v}",
 		podKeys, n.requestedResource, n.nonzeroRequest, n.usedPorts, n.allocatableResource)
 }
 
-func hasPodAffinityConstraints(pod *v1.Pod) bool {
-	affinity := pod.Spec.Affinity
+func hasPodAffinityConstraints(pod v1.Placeable) bool {
+	affinity := pod.GetAffinity()
 	return affinity != nil && (affinity.PodAffinity != nil || affinity.PodAntiAffinity != nil)
 }
 
 // AddPod adds pod information to this NodeInfo.
-func (n *NodeInfo) AddPod(pod *v1.Pod) {
+func (n *NodeInfo) AddPod(pod v1.Placeable) {
 	res, non0_cpu, non0_mem := calculateResource(pod)
 	n.requestedResource.MilliCPU += res.MilliCPU
 	n.requestedResource.Memory += res.Memory
@@ -352,7 +352,7 @@ func (n *NodeInfo) AddPod(pod *v1.Pod) {
 }
 
 // RemovePod subtracts pod information from this NodeInfo.
-func (n *NodeInfo) RemovePod(pod *v1.Pod) error {
+func (n *NodeInfo) RemovePod(pod v1.Placeable) error {
 	k1, err := getPodKey(pod)
 	if err != nil {
 		return err
@@ -410,12 +410,12 @@ func (n *NodeInfo) RemovePod(pod *v1.Pod) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("no corresponding pod %s in pods of node %s", pod.Name, n.node.Name)
+	return fmt.Errorf("no corresponding pod %s in pods of node %s", pod.GetName(), n.node.Name)
 }
 
-func calculateResource(pod *v1.Pod) (res Resource, non0_cpu int64, non0_mem int64) {
+func calculateResource(pod v1.Placeable) (res Resource, non0_cpu int64, non0_mem int64) {
 	resPtr := &res
-	for _, c := range pod.Spec.Containers {
+	for _, c := range pod.GetContainers() {
 		resPtr.Add(c.Resources.Requests)
 
 		non0_cpu_req, non0_mem_req := priorityutil.GetNonzeroRequests(&c.Resources.Requests)
@@ -427,9 +427,9 @@ func calculateResource(pod *v1.Pod) (res Resource, non0_cpu int64, non0_mem int6
 	return
 }
 
-func (n *NodeInfo) updateUsedPorts(pod *v1.Pod, used bool) {
-	for j := range pod.Spec.Containers {
-		container := &pod.Spec.Containers[j]
+func (n *NodeInfo) updateUsedPorts(pod v1.Placeable, used bool) {
+	for j := range pod.GetContainers() {
+		container := &pod.GetContainers()[j]
 		for k := range container.Ports {
 			podPort := &container.Ports[k]
 			// "0" is explicitly ignored in PodFitsHostPorts,
@@ -485,14 +485,14 @@ func (n *NodeInfo) RemoveNode(node *v1.Node) error {
 // corresponding NodeInfo. In order for the simulation to work, we call this method
 // on the pods returned from SchedulerCache, so that predicate functions see
 // only the pods that are not removed from the NodeInfo.
-func (n *NodeInfo) FilterOutPods(pods []*v1.Pod) []*v1.Pod {
+func (n *NodeInfo) FilterOutPods(pods []v1.Placeable) []v1.Placeable {
 	node := n.Node()
 	if node == nil {
 		return pods
 	}
-	filtered := make([]*v1.Pod, 0, len(pods))
+	filtered := make([]v1.Placeable, 0, len(pods))
 	for _, p := range pods {
-		if p.Spec.NodeName == node.Name {
+		if p.GetNodeName() == node.Name {
 			// If pod is on the given node, add it to 'filtered' only if it is present in nodeInfo.
 			podKey, _ := getPodKey(p)
 			for _, np := range n.Pods() {
@@ -510,16 +510,16 @@ func (n *NodeInfo) FilterOutPods(pods []*v1.Pod) []*v1.Pod {
 }
 
 // getPodKey returns the string key of a pod.
-func getPodKey(pod *v1.Pod) (string, error) {
+func getPodKey(pod v1.Placeable) (string, error) {
 	return clientcache.MetaNamespaceKeyFunc(pod)
 }
 
 // Filter implements PodFilter interface. It returns false only if the pod node name
 // matches NodeInfo.node and the pod is not found in the pods list. Otherwise,
 // returns true.
-func (n *NodeInfo) Filter(pod *v1.Pod) bool {
+func (n *NodeInfo) Filter(pod v1.Placeable) bool {
 	pFullName := util.GetPodFullName(pod)
-	if pod.Spec.NodeName != n.node.Name {
+	if pod.GetNodeName() != n.node.Name {
 		return true
 	}
 	for _, p := range n.pods {

@@ -48,10 +48,10 @@ func AddUnsetLabelsToMap(aL map[string]string, labelsToAdd []string, labelSet la
 }
 
 // FilterPodsByNamespace filters pods outside a namespace from the given list.
-func FilterPodsByNamespace(pods []*v1.Pod, ns string) []*v1.Pod {
-	filtered := []*v1.Pod{}
+func FilterPodsByNamespace(pods []v1.Placeable, ns string) []v1.Placeable {
+	filtered := []v1.Placeable{}
 	for _, nsPod := range pods {
-		if nsPod.Namespace == ns {
+		if nsPod.GetNamespace() == ns {
 			filtered = append(filtered, nsPod)
 		}
 	}
@@ -67,13 +67,13 @@ func CreateSelectorFromLabels(aL map[string]string) labels.Selector {
 }
 
 // GetEquivalencePod returns a EquivalencePod which contains a group of pod attributes which can be reused.
-func GetEquivalencePod(pod *v1.Pod) interface{} {
+func GetEquivalencePod(pod v1.Placeable) interface{} {
 	// For now we only consider pods:
 	// 1. OwnerReferences is Controller
 	// 2. with same OwnerReferences
 	// to be equivalent
-	if len(pod.OwnerReferences) != 0 {
-		for _, ref := range pod.OwnerReferences {
+	if len(pod.GetOwnerReferences()) != 0 {
+		for _, ref := range pod.GetOwnerReferences() {
 			if *ref.Controller {
 				// a pod can only belongs to one controller
 				return &EquivalencePod{

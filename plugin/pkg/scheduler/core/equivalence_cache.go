@@ -172,7 +172,7 @@ func (ec *EquivalenceCache) InvalidateAllCachedPredicateItemOfNode(nodeName stri
 }
 
 // InvalidateCachedPredicateItemForPodAdd is a wrapper of InvalidateCachedPredicateItem for pod add case
-func (ec *EquivalenceCache) InvalidateCachedPredicateItemForPodAdd(pod *v1.Pod, nodeName string) {
+func (ec *EquivalenceCache) InvalidateCachedPredicateItemForPodAdd(pod v1.Placeable, nodeName string) {
 	// MatchInterPodAffinity: we assume scheduler can make sure newly binded pod
 	// will not break the existing inter pod affinity. So we does not need to invalidate
 	// MatchInterPodAffinity when pod added.
@@ -194,7 +194,7 @@ func (ec *EquivalenceCache) InvalidateCachedPredicateItemForPodAdd(pod *v1.Pod, 
 // getHashEquivalencePod returns the hash of equivalence pod.
 // 1. equivalenceHash
 // 2. if equivalence pod is found
-func (ec *EquivalenceCache) getHashEquivalencePod(pod *v1.Pod) (uint64, bool) {
+func (ec *EquivalenceCache) getHashEquivalencePod(pod v1.Placeable) (uint64, bool) {
 	equivalencePod := ec.getEquivalencePod(pod)
 	if equivalencePod != nil {
 		hash := fnv.New32a()

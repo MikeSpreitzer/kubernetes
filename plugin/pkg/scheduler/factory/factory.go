@@ -158,7 +158,7 @@ func NewConfigFactory(
 		cache.FilteringResourceEventHandler{
 			FilterFunc: func(obj interface{}) bool {
 				switch t := obj.(type) {
-				case *v1.Pod:
+				case v1.Placeable:
 					return assignedNonTerminatedPod(t)
 				default:
 					runtime.HandleError(fmt.Errorf("unable to handle object in %T: %T", c, obj))
@@ -177,7 +177,7 @@ func NewConfigFactory(
 		cache.FilteringResourceEventHandler{
 			FilterFunc: func(obj interface{}) bool {
 				switch t := obj.(type) {
-				case *v1.Pod:
+				case v1.Placeable:
 					return unassignedNonTerminatedPod(t)
 				default:
 					runtime.HandleError(fmt.Errorf("unable to handle object in %T: %T", c, obj))
@@ -390,7 +390,7 @@ func (c *ConfigFactory) GetScheduledPodLister() corelisters.PodLister {
 }
 
 func (c *ConfigFactory) addPodToCache(obj interface{}) {
-	pod, ok := obj.(*v1.Pod)
+	pod, ok := obj.(v1.Placeable)
 	if !ok {
 		glog.Errorf("cannot convert to *v1.Pod: %v", obj)
 		return
@@ -404,12 +404,12 @@ func (c *ConfigFactory) addPodToCache(obj interface{}) {
 }
 
 func (c *ConfigFactory) updatePodInCache(oldObj, newObj interface{}) {
-	oldPod, ok := oldObj.(*v1.Pod)
+	oldPod, ok := oldObj.(v1.Placeable)
 	if !ok {
 		glog.Errorf("cannot convert oldObj to *v1.Pod: %v", oldObj)
 		return
 	}
-	newPod, ok := newObj.(*v1.Pod)
+	newPod, ok := newObj.(v1.Placeable)
 	if !ok {
 		glog.Errorf("cannot convert newObj to *v1.Pod: %v", newObj)
 		return
@@ -422,11 +422,11 @@ func (c *ConfigFactory) updatePodInCache(oldObj, newObj interface{}) {
 	c.invalidateCachedPredicatesOnUpdatePod(newPod, oldPod)
 }
 
-func (c *ConfigFactory) invalidateCachedPredicatesOnUpdatePod(newPod *v1.Pod, oldPod *v1.Pod) {
+func (c *ConfigFactory) invalidateCachedPredicatesOnUpdatePod(newPod v1.Placeable, oldPod v1.Placeable) {
 	if c.enableEquivalenceClassCache {
 		// if the pod does not have binded node, updating equivalence cache is meaningless;
 		// if pod's binded node has been changed, that case should be handled by pod add & delete.
-		if len(newPod.Spec.NodeName) != 0 && newPod.Spec.NodeName == oldPod.Spec.NodeName {
+		if len(newPod.GetNodeName()) != 0 && newPod.GetNodeName() == oldPod.GetNodeName() {
 			if !reflect.DeepEqual(oldPod.GetLabels(), newPod.GetLabels()) {
 				// MatchInterPodAffinity need to be reconsidered for this node,
 				// as well as all nodes in its same failure domain.
@@ -437,20 +437,20 @@ func (c *ConfigFactory) invalidateCachedPredicatesOnUpdatePod(newPod *v1.Pod, ol
 			if !reflect.DeepEqual(predicates.GetResourceRequest(newPod),
 				predicates.GetResourceRequest(oldPod)) {
 				c.equivalencePodCache.InvalidateCachedPredicateItem(
-					newPod.Spec.NodeName, generalPredicatesSets)
+					newPod.GetNodeName(), generalPredicatesSets)
 			}
 		}
 	}
 }
 
 func (c *ConfigFactory) deletePodFromCache(obj interface{}) {
-	var pod *v1.Pod
+	var pod v1.Placeable
 	switch t := obj.(type) {
-	case *v1.Pod:
+	case v1.Placeable:
 		pod = t
 	case cache.DeletedFinalStateUnknown:
 		var ok bool
-		pod, ok = t.Obj.(*v1.Pod)
+		pod, ok = t.Obj.(v1.Placeable)
 		if !ok {
 			glog.Errorf("cannot convert to *v1.Pod: %v", t.Obj)
 			return
@@ -466,10 +466,10 @@ func (c *ConfigFactory) deletePodFromCache(obj interface{}) {
 	c.invalidateCachedPredicatesOnDeletePod(pod)
 }
 
-func (c *ConfigFactory) invalidateCachedPredicatesOnDeletePod(pod *v1.Pod) {
+func (c *ConfigFactory) invalidateCachedPredicatesOnDeletePod(pod v1.Placeable) {
 	if c.enableEquivalenceClassCache {
 		// part of this case is the same as pod add.
-		c.equivalencePodCache.InvalidateCachedPredicateItemForPodAdd(pod, pod.Spec.NodeName)
+		c.equivalencePodCache.InvalidateCachedPredicateItemForPodAdd(pod, pod.GetNodeName())
 		// MatchInterPodAffinity need to be reconsidered for this node,
 		// as well as all nodes in its same failure domain.
 		// TODO(resouer) can we just do this for nodes in the same failure domain
@@ -477,11 +477,11 @@ func (c *ConfigFactory) invalidateCachedPredicatesOnDeletePod(pod *v1.Pod) {
 			matchInterPodAffinitySet)
 
 		// if this pod have these PV, cached result of disk conflict will become invalid.
-		for _, volume := range pod.Spec.Volumes {
+		for _, volume := range pod.GetVolumes() {
 			if volume.GCEPersistentDisk != nil || volume.AWSElasticBlockStore != nil ||
 				volume.RBD != nil || volume.ISCSI != nil {
 				c.equivalencePodCache.InvalidateCachedPredicateItem(
-					pod.Spec.NodeName, noDiskConflictSet)
+					pod.GetNodeName(), noDiskConflictSet)
 			}
 		}
 	}
@@ -720,7 +720,7 @@ func (f *ConfigFactory) CreateFromKeys(predicateKeys, priorityKeys sets.String, 
 		WaitForCacheSync: func() bool {
 			return cache.WaitForCacheSync(f.StopEverything, f.scheduledPodsHasSynced)
 		},
-		NextPod: func() *v1.Pod {
+		NextPod: func() v1.Placeable {
 			return f.getNextPod()
 		},
 		Error:          f.MakeDefaultErrorFunc(podBackoff, f.podQueue),
@@ -786,37 +786,37 @@ func (f *ConfigFactory) getPluginArgs() (*PluginFactoryArgs, error) {
 	}, nil
 }
 
-func (f *ConfigFactory) getNextPod() *v1.Pod {
+func (f *ConfigFactory) getNextPod() v1.Placeable {
 	for {
-		pod := cache.Pop(f.podQueue).(*v1.Pod)
+		pod := cache.Pop(f.podQueue).(v1.Placeable)
 		if f.ResponsibleForPod(pod) {
-			glog.V(4).Infof("About to try and schedule pod %v", pod.Name)
+			glog.V(4).Infof("About to try and schedule pod %v", pod.GetName())
 			return pod
 		}
 	}
 }
 
-func (f *ConfigFactory) ResponsibleForPod(pod *v1.Pod) bool {
-	return f.schedulerName == pod.Spec.SchedulerName
+func (f *ConfigFactory) ResponsibleForPod(pod v1.Placeable) bool {
+	return f.schedulerName == pod.GetSchedulerName()
 }
 
 // unassignedNonTerminatedPod selects pods that are unassigned and non-terminal.
-func unassignedNonTerminatedPod(pod *v1.Pod) bool {
-	if len(pod.Spec.NodeName) != 0 {
+func unassignedNonTerminatedPod(pod v1.Placeable) bool {
+	if len(pod.GetNodeName()) != 0 {
 		return false
 	}
-	if pod.Status.Phase == v1.PodSucceeded || pod.Status.Phase == v1.PodFailed {
+	if pod.GetPhase() == v1.PodSucceeded || pod.GetPhase() == v1.PodFailed {
 		return false
 	}
 	return true
 }
 
 // assignedNonTerminatedPod selects pods that are assigned and non-terminal (scheduled and running).
-func assignedNonTerminatedPod(pod *v1.Pod) bool {
-	if len(pod.Spec.NodeName) == 0 {
+func assignedNonTerminatedPod(pod v1.Placeable) bool {
+	if len(pod.GetNodeName()) == 0 {
 		return false
 	}
-	if pod.Status.Phase == v1.PodSucceeded || pod.Status.Phase == v1.PodFailed {
+	if pod.GetPhase() == v1.PodSucceeded || pod.GetPhase() == v1.PodFailed {
 		return false
 	}
 	return true
@@ -829,14 +829,14 @@ type assignedPodLister struct {
 }
 
 // List lists all Pods in the indexer for a given namespace.
-func (l assignedPodLister) List(selector labels.Selector) ([]*v1.Pod, error) {
+func (l assignedPodLister) List(selector labels.Selector) ([]v1.Placeable, error) {
 	list, err := l.PodLister.List(selector)
 	if err != nil {
 		return nil, err
 	}
-	filtered := make([]*v1.Pod, 0, len(list))
+	filtered := make([]v1.Placeable, 0, len(list))
 	for _, pod := range list {
-		if len(pod.Spec.NodeName) > 0 {
+		if len(pod.GetNodeName()) > 0 {
 			filtered = append(filtered, pod)
 		}
 	}
@@ -855,14 +855,14 @@ type assignedPodNamespaceLister struct {
 }
 
 // List lists all Pods in the indexer for a given namespace.
-func (l assignedPodNamespaceLister) List(selector labels.Selector) (ret []*v1.Pod, err error) {
+func (l assignedPodNamespaceLister) List(selector labels.Selector) (ret []v1.Placeable, err error) {
 	list, err := l.PodNamespaceLister.List(selector)
 	if err != nil {
 		return nil, err
 	}
-	filtered := make([]*v1.Pod, 0, len(list))
+	filtered := make([]v1.Placeable, 0, len(list))
 	for _, pod := range list {
-		if len(pod.Spec.NodeName) > 0 {
+		if len(pod.GetNodeName()) > 0 {
 			filtered = append(filtered, pod)
 		}
 	}
@@ -870,12 +870,12 @@ func (l assignedPodNamespaceLister) List(selector labels.Selector) (ret []*v1.Po
 }
 
 // Get retrieves the Pod from the indexer for a given namespace and name.
-func (l assignedPodNamespaceLister) Get(name string) (*v1.Pod, error) {
+func (l assignedPodNamespaceLister) Get(name string) (v1.Placeable, error) {
 	pod, err := l.PodNamespaceLister.Get(name)
 	if err != nil {
 		return nil, err
 	}
-	if len(pod.Spec.NodeName) > 0 {
+	if len(pod.GetNodeName()) > 0 {
 		return pod, nil
 	}
 	return nil, errors.NewNotFound(schema.GroupResource{Resource: string(v1.ResourcePods)}, name)
@@ -902,15 +902,15 @@ func NewPodInformer(client clientset.Interface, resyncPeriod time.Duration) core
 	}
 }
 
-func (factory *ConfigFactory) MakeDefaultErrorFunc(backoff *util.PodBackoff, podQueue *cache.FIFO) func(pod *v1.Pod, err error) {
-	return func(pod *v1.Pod, err error) {
+func (factory *ConfigFactory) MakeDefaultErrorFunc(backoff *util.PodBackoff, podQueue *cache.FIFO) func(pod v1.Placeable, err error) {
+	return func(pod v1.Placeable, err error) {
 		if err == core.ErrNoNodesAvailable {
-			glog.V(4).Infof("Unable to schedule %v %v: no nodes are registered to the cluster; waiting", pod.Namespace, pod.Name)
+			glog.V(4).Infof("Unable to schedule %v %v: no nodes are registered to the cluster; waiting", pod.GetNamespace(), pod.GetName())
 		} else {
 			if _, ok := err.(*core.FitError); ok {
-				glog.V(4).Infof("Unable to schedule %v %v: no fit: %v; waiting", pod.Namespace, pod.Name, err)
+				glog.V(4).Infof("Unable to schedule %v %v: no fit: %v; waiting", pod.GetNamespace(), pod.GetName(), err)
 			} else {
-				glog.Errorf("Error scheduling %v %v: %v; retrying", pod.Namespace, pod.Name, err)
+				glog.Errorf("Error scheduling %v %v: %v; retrying", pod.GetNamespace(), pod.GetName(), err)
 			}
 		}
 		backoff.Gc()
@@ -919,8 +919,8 @@ func (factory *ConfigFactory) MakeDefaultErrorFunc(backoff *util.PodBackoff, pod
 		go func() {
 			defer runtime.HandleCrash()
 			podID := types.NamespacedName{
-				Namespace: pod.Namespace,
-				Name:      pod.Name,
+				Namespace: pod.GetNamespace(),
+				Name:      pod.GetName(),
 			}
 
 			entry := backoff.GetEntry(podID)
@@ -933,7 +933,7 @@ func (factory *ConfigFactory) MakeDefaultErrorFunc(backoff *util.PodBackoff, pod
 			for {
 				pod, err := factory.client.CoreV1().Pods(podID.Namespace).Get(podID.Name, metav1.GetOptions{})
 				if err == nil {
-					if len(pod.Spec.NodeName) == 0 {
+					if len(pod.GetNodeName()) == 0 {
 						podQueue.AddIfNotPresent(pod)
 					}
 					break
@@ -984,10 +984,10 @@ type podConditionUpdater struct {
 	Client clientset.Interface
 }
 
-func (p *podConditionUpdater) Update(pod *v1.Pod, condition *v1.PodCondition) error {
-	glog.V(2).Infof("Updating pod condition for %s/%s to (%s==%s)", pod.Namespace, pod.Name, condition.Type, condition.Status)
+func (p *podConditionUpdater) Update(pod v1.Placeable, condition *v1.PodCondition) error {
+	glog.V(2).Infof("Updating pod condition for %s/%s to (%s==%s)", pod.GetNamespace(), pod.GetName(), condition.Type, condition.Status)
 	if podutil.UpdatePodCondition(&pod.Status, condition) {
-		_, err := p.Client.CoreV1().Pods(pod.Namespace).UpdateStatus(pod)
+		_, err := p.Client.CoreV1().Pods(pod.GetNamespace()).UpdateStatus(pod)
 		return err
 	}
 	return nil
@@ -997,23 +997,23 @@ type podPreemptor struct {
 	Client clientset.Interface
 }
 
-func (p *podPreemptor) GetUpdatedPod(pod *v1.Pod) (*v1.Pod, error) {
-	return p.Client.CoreV1().Pods(pod.Namespace).Get(pod.Name, metav1.GetOptions{})
+func (p *podPreemptor) GetUpdatedPod(pod v1.Placeable) (v1.Placeable, error) {
+	return p.Client.CoreV1().Pods(pod.GetNamespace()).Get(pod.GetName(), metav1.GetOptions{})
 }
 
-func (p *podPreemptor) DeletePod(pod *v1.Pod) error {
-	return p.Client.CoreV1().Pods(pod.Namespace).Delete(pod.Name, &metav1.DeleteOptions{})
+func (p *podPreemptor) DeletePod(pod v1.Placeable) error {
+	return p.Client.CoreV1().Pods(pod.GetNamespace()).Delete(pod.GetName(), &metav1.DeleteOptions{})
 }
 
 //TODO(bsalamat): change this to patch PodStatus to avoid overwriting potential pending status updates.
-func (p *podPreemptor) UpdatePodAnnotations(pod *v1.Pod, annotations map[string]string) error {
+func (p *podPreemptor) UpdatePodAnnotations(pod v1.Placeable, annotations map[string]string) error {
 	podCopy := pod.DeepCopy()
-	if podCopy.Annotations == nil {
-		podCopy.Annotations = map[string]string{}
+	if podCopy.GetAnnotations() == nil {
+		podCopy.SetAnnotations(map[string]string{})
 	}
 	for k, v := range annotations {
-		podCopy.Annotations[k] = v
+		podCopy.GetAnnotations()[k] = v
 	}
-	_, err := p.Client.CoreV1().Pods(podCopy.Namespace).UpdateStatus(podCopy)
+	_, err := p.Client.CoreV1().Pods(podCopy.GetNamespace()).UpdateStatus(podCopy)
 	return err
 }

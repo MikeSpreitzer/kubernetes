@@ -27,30 +27,30 @@ import (
 
 // FitPredicate is a function that indicates if a pod fits into an existing node.
 // The failure information is given by the error.
-type FitPredicate func(pod *v1.Pod, meta PredicateMetadata, nodeInfo *schedulercache.NodeInfo) (bool, []PredicateFailureReason, error)
+type FitPredicate func(pod v1.Placeable, meta PredicateMetadata, nodeInfo *schedulercache.NodeInfo) (bool, []PredicateFailureReason, error)
 
 // PriorityMapFunction is a function that computes per-node results for a given node.
 // TODO: Figure out the exact API of this method.
 // TODO: Change interface{} to a specific type.
-type PriorityMapFunction func(pod *v1.Pod, meta interface{}, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error)
+type PriorityMapFunction func(pod v1.Placeable, meta interface{}, nodeInfo *schedulercache.NodeInfo) (schedulerapi.HostPriority, error)
 
 // PriorityReduceFunction is a function that aggregated per-node results and computes
 // final scores for all nodes.
 // TODO: Figure out the exact API of this method.
 // TODO: Change interface{} to a specific type.
-type PriorityReduceFunction func(pod *v1.Pod, meta interface{}, nodeNameToInfo map[string]*schedulercache.NodeInfo, result schedulerapi.HostPriorityList) error
+type PriorityReduceFunction func(pod v1.Placeable, meta interface{}, nodeNameToInfo map[string]*schedulercache.NodeInfo, result schedulerapi.HostPriorityList) error
 
 // PredicateMetadataProducer is a function that computes predicate metadata for a given pod.
-type PredicateMetadataProducer func(pod *v1.Pod, nodeNameToInfo map[string]*schedulercache.NodeInfo) PredicateMetadata
+type PredicateMetadataProducer func(pod v1.Placeable, nodeNameToInfo map[string]*schedulercache.NodeInfo) PredicateMetadata
 
 // MetadataProducer is a function that computes metadata for a given pod. This
 // is now used for only for priority functions. For predicates please use PredicateMetadataProducer.
 // TODO: Rename this once we have a specific type for priority metadata producer.
-type MetadataProducer func(pod *v1.Pod, nodeNameToInfo map[string]*schedulercache.NodeInfo) interface{}
+type MetadataProducer func(pod v1.Placeable, nodeNameToInfo map[string]*schedulercache.NodeInfo) interface{}
 
 // DEPRECATED
 // Use Map-Reduce pattern for priority functions.
-type PriorityFunction func(pod *v1.Pod, nodeNameToInfo map[string]*schedulercache.NodeInfo, nodes []*v1.Node) (schedulerapi.HostPriorityList, error)
+type PriorityFunction func(pod v1.Placeable, nodeNameToInfo map[string]*schedulercache.NodeInfo, nodes []*v1.Node) (schedulerapi.HostPriorityList, error)
 
 type PriorityConfig struct {
 	Map    PriorityMapFunction
@@ -62,12 +62,12 @@ type PriorityConfig struct {
 }
 
 // EmptyPredicateMetadataProducer returns a no-op MetadataProducer type.
-func EmptyPredicateMetadataProducer(pod *v1.Pod, nodeNameToInfo map[string]*schedulercache.NodeInfo) PredicateMetadata {
+func EmptyPredicateMetadataProducer(pod v1.Placeable, nodeNameToInfo map[string]*schedulercache.NodeInfo) PredicateMetadata {
 	return nil
 }
 
 // EmptyMetadataProducer returns a no-op MetadataProducer type.
-func EmptyMetadataProducer(pod *v1.Pod, nodeNameToInfo map[string]*schedulercache.NodeInfo) interface{} {
+func EmptyMetadataProducer(pod v1.Placeable, nodeNameToInfo map[string]*schedulercache.NodeInfo) interface{} {
 	return nil
 }
 
@@ -75,7 +75,7 @@ type PredicateFailureReason interface {
 	GetReason() string
 }
 
-type GetEquivalencePodFunc func(pod *v1.Pod) interface{}
+type GetEquivalencePodFunc func(pod v1.Placeable) interface{}
 
 // NodeLister interface represents anything that can list nodes for a scheduler.
 type NodeLister interface {
@@ -88,10 +88,10 @@ type NodeLister interface {
 type PodLister interface {
 	// We explicitly return []*v1.Pod, instead of v1.PodList, to avoid
 	// performing expensive copies that are unneeded.
-	List(labels.Selector) ([]*v1.Pod, error)
+	List(labels.Selector) ([]v1.Placeable, error)
 	// This is similar to "List()", but the returned slice does not
 	// contain pods that don't pass `podFilter`.
-	FilteredList(podFilter schedulercache.PodFilter, selector labels.Selector) ([]*v1.Pod, error)
+	FilteredList(podFilter schedulercache.PodFilter, selector labels.Selector) ([]v1.Placeable, error)
 }
 
 // ServiceLister interface represents anything that can produce a list of services; the list is consumed by a scheduler.
@@ -99,7 +99,7 @@ type ServiceLister interface {
 	// Lists all the services
 	List(labels.Selector) ([]*v1.Service, error)
 	// Gets the services for the given pod
-	GetPodServices(*v1.Pod) ([]*v1.Service, error)
+	GetPodServices(v1.Placeable) ([]*v1.Service, error)
 }
 
 // ControllerLister interface represents anything that can produce a list of ReplicationController; the list is consumed by a scheduler.
@@ -107,13 +107,13 @@ type ControllerLister interface {
 	// Lists all the replication controllers
 	List(labels.Selector) ([]*v1.ReplicationController, error)
 	// Gets the services for the given pod
-	GetPodControllers(*v1.Pod) ([]*v1.ReplicationController, error)
+	GetPodControllers(v1.Placeable) ([]*v1.ReplicationController, error)
 }
 
 // ReplicaSetLister interface represents anything that can produce a list of ReplicaSet; the list is consumed by a scheduler.
 type ReplicaSetLister interface {
 	// Gets the replicasets for the given pod
-	GetPodReplicaSets(*v1.Pod) ([]*extensions.ReplicaSet, error)
+	GetPodReplicaSets(v1.Placeable) ([]*extensions.ReplicaSet, error)
 }
 
 var _ ControllerLister = &EmptyControllerLister{}
@@ -127,7 +127,7 @@ func (f EmptyControllerLister) List(labels.Selector) ([]*v1.ReplicationControlle
 }
 
 // GetPodControllers returns nil
-func (f EmptyControllerLister) GetPodControllers(pod *v1.Pod) (controllers []*v1.ReplicationController, err error) {
+func (f EmptyControllerLister) GetPodControllers(pod v1.Placeable) (controllers []*v1.ReplicationController, err error) {
 	return nil, nil
 }
 
@@ -137,14 +137,14 @@ var _ ReplicaSetLister = &EmptyReplicaSetLister{}
 type EmptyReplicaSetLister struct{}
 
 // GetPodReplicaSets returns nil
-func (f EmptyReplicaSetLister) GetPodReplicaSets(pod *v1.Pod) (rss []*extensions.ReplicaSet, err error) {
+func (f EmptyReplicaSetLister) GetPodReplicaSets(pod v1.Placeable) (rss []*extensions.ReplicaSet, err error) {
 	return nil, nil
 }
 
 // StatefulSetLister interface represents anything that can produce a list of StatefulSet; the list is consumed by a scheduler.
 type StatefulSetLister interface {
 	// Gets the StatefulSet for the given pod.
-	GetPodStatefulSets(*v1.Pod) ([]*apps.StatefulSet, error)
+	GetPodStatefulSets(v1.Placeable) ([]*apps.StatefulSet, error)
 }
 
 var _ StatefulSetLister = &EmptyStatefulSetLister{}
@@ -153,12 +153,12 @@ var _ StatefulSetLister = &EmptyStatefulSetLister{}
 type EmptyStatefulSetLister struct{}
 
 // GetPodStatefulSets of EmptyStatefulSetLister returns nil.
-func (f EmptyStatefulSetLister) GetPodStatefulSets(pod *v1.Pod) (sss []*apps.StatefulSet, err error) {
+func (f EmptyStatefulSetLister) GetPodStatefulSets(pod v1.Placeable) (sss []*apps.StatefulSet, err error) {
 	return nil, nil
 }
 
 type PredicateMetadata interface {
 	ShallowCopy() PredicateMetadata
-	AddPod(addedPod *v1.Pod, nodeInfo *schedulercache.NodeInfo) error
-	RemovePod(deletedPod *v1.Pod) error
+	AddPod(addedPod v1.Placeable, nodeInfo *schedulercache.NodeInfo) error
+	RemovePod(deletedPod v1.Placeable) error
 }

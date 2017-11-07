@@ -21,12 +21,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func GetControllerRef(pod *v1.Pod) *metav1.OwnerReference {
-	if len(pod.OwnerReferences) == 0 {
+func GetControllerRef(pod v1.Placeable) *metav1.OwnerReference {
+	if len(pod.GetOwnerReferences()) == 0 {
 		return nil
 	}
-	for i := range pod.OwnerReferences {
-		ref := &pod.OwnerReferences[i]
+	for i := range pod.GetOwnerReferences() {
+		ref := &pod.GetOwnerReferences()[i]
 		if ref.Controller != nil && *ref.Controller {
 			return ref
 		}

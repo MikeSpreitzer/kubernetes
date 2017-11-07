@@ -41,21 +41,21 @@ func (f FakeNodeLister) List() ([]*v1.Node, error) {
 var _ PodLister = &FakePodLister{}
 
 // FakePodLister implements PodLister on an []v1.Pods for test purposes.
-type FakePodLister []*v1.Pod
+type FakePodLister []v1.Placeable
 
 // List returns []*v1.Pod matching a query.
-func (f FakePodLister) List(s labels.Selector) (selected []*v1.Pod, err error) {
+func (f FakePodLister) List(s labels.Selector) (selected []v1.Placeable, err error) {
 	for _, pod := range f {
-		if s.Matches(labels.Set(pod.Labels)) {
+		if s.Matches(labels.Set(pod.GetLabels())) {
 			selected = append(selected, pod)
 		}
 	}
 	return selected, nil
 }
 
-func (f FakePodLister) FilteredList(podFilter schedulercache.PodFilter, s labels.Selector) (selected []*v1.Pod, err error) {
+func (f FakePodLister) FilteredList(podFilter schedulercache.PodFilter, s labels.Selector) (selected []v1.Placeable, err error) {
 	for _, pod := range f {
-		if podFilter(pod) && s.Matches(labels.Set(pod.Labels)) {
+		if podFilter(pod) && s.Matches(labels.Set(pod.GetLabels())) {
 			selected = append(selected, pod)
 		}
 	}
@@ -73,17 +73,17 @@ func (f FakeServiceLister) List(labels.Selector) ([]*v1.Service, error) {
 }
 
 // GetPodServices gets the services that have the selector that match the labels on the given pod.
-func (f FakeServiceLister) GetPodServices(pod *v1.Pod) (services []*v1.Service, err error) {
+func (f FakeServiceLister) GetPodServices(pod v1.Placeable) (services []*v1.Service, err error) {
 	var selector labels.Selector
 
 	for i := range f {
 		service := f[i]
 		// consider only services that are in the same namespace as the pod
-		if service.Namespace != pod.Namespace {
+		if service.Namespace != pod.GetNamespace() {
 			continue
 		}
 		selector = labels.Set(service.Spec.Selector).AsSelectorPreValidated()
-		if selector.Matches(labels.Set(pod.Labels)) {
+		if selector.Matches(labels.Set(pod.GetLabels())) {
 			services = append(services, service)
 		}
 	}
@@ -101,21 +101,21 @@ func (f FakeControllerLister) List(labels.Selector) ([]*v1.ReplicationController
 }
 
 // GetPodControllers gets the ReplicationControllers that have the selector that match the labels on the given pod
-func (f FakeControllerLister) GetPodControllers(pod *v1.Pod) (controllers []*v1.ReplicationController, err error) {
+func (f FakeControllerLister) GetPodControllers(pod v1.Placeable) (controllers []*v1.ReplicationController, err error) {
 	var selector labels.Selector
 
 	for i := range f {
 		controller := f[i]
-		if controller.Namespace != pod.Namespace {
+		if controller.Namespace != pod.GetNamespace() {
 			continue
 		}
 		selector = labels.Set(controller.Spec.Selector).AsSelectorPreValidated()
-		if selector.Matches(labels.Set(pod.Labels)) {
+		if selector.Matches(labels.Set(pod.GetLabels())) {
 			controllers = append(controllers, controller)
 		}
 	}
 	if len(controllers) == 0 {
-		err = fmt.Errorf("Could not find Replication Controller for pod %s in namespace %s with labels: %v", pod.Name, pod.Namespace, pod.Labels)
+		err = fmt.Errorf("Could not find Replication Controller for pod %s in namespace %s with labels: %v", pod.GetName(), pod.GetNamespace(), pod.GetLabels())
 	}
 
 	return
@@ -127,11 +127,11 @@ var _ ReplicaSetLister = &FakeReplicaSetLister{}
 type FakeReplicaSetLister []*extensions.ReplicaSet
 
 // GetPodReplicaSets gets the ReplicaSets that have the selector that match the labels on the given pod
-func (f FakeReplicaSetLister) GetPodReplicaSets(pod *v1.Pod) (rss []*extensions.ReplicaSet, err error) {
+func (f FakeReplicaSetLister) GetPodReplicaSets(pod v1.Placeable) (rss []*extensions.ReplicaSet, err error) {
 	var selector labels.Selector
 
 	for _, rs := range f {
-		if rs.Namespace != pod.Namespace {
+		if rs.Namespace != pod.GetNamespace() {
 			continue
 		}
 		selector, err = metav1.LabelSelectorAsSelector(rs.Spec.Selector)
@@ -139,12 +139,12 @@ func (f FakeReplicaSetLister) GetPodReplicaSets(pod *v1.Pod) (rss []*extensions.
 			return
 		}
 
-		if selector.Matches(labels.Set(pod.Labels)) {
+		if selector.Matches(labels.Set(pod.GetLabels())) {
 			rss = append(rss, rs)
 		}
 	}
 	if len(rss) == 0 {
-		err = fmt.Errorf("Could not find ReplicaSet for pod %s in namespace %s with labels: %v", pod.Name, pod.Namespace, pod.Labels)
+		err = fmt.Errorf("Could not find ReplicaSet for pod %s in namespace %s with labels: %v", pod.GetName(), pod.GetNamespace(), pod.GetLabels())
 	}
 
 	return
@@ -156,23 +156,23 @@ var _ StatefulSetLister = &FakeStatefulSetLister{}
 type FakeStatefulSetLister []*apps.StatefulSet
 
 // GetPodStatefulSets gets the StatefulSets that have the selector that match the labels on the given pod.
-func (f FakeStatefulSetLister) GetPodStatefulSets(pod *v1.Pod) (sss []*apps.StatefulSet, err error) {
+func (f FakeStatefulSetLister) GetPodStatefulSets(pod v1.Placeable) (sss []*apps.StatefulSet, err error) {
 	var selector labels.Selector
 
 	for _, ss := range f {
-		if ss.Namespace != pod.Namespace {
+		if ss.Namespace != pod.GetNamespace() {
 			continue
 		}
 		selector, err = metav1.LabelSelectorAsSelector(ss.Spec.Selector)
 		if err != nil {
 			return
 		}
-		if selector.Matches(labels.Set(pod.Labels)) {
+		if selector.Matches(labels.Set(pod.GetLabels())) {
 			sss = append(sss, ss)
 		}
 	}
 	if len(sss) == 0 {
-		err = fmt.Errorf("Could not find StatefulSet for pod %s in namespace %s with labels: %v", pod.Name, pod.Namespace, pod.Labels)
+		err = fmt.Errorf("Could not find StatefulSet for pod %s in namespace %s with labels: %v", pod.GetName(), pod.GetNamespace(), pod.GetLabels())
 	}
 	return
 }

@@ -23,17 +23,17 @@ import (
 )
 
 // PodsToCache is used for testing
-type PodsToCache []*v1.Pod
+type PodsToCache []v1.Placeable
 
-func (p PodsToCache) AssumePod(pod *v1.Pod) error { return nil }
+func (p PodsToCache) AssumePod(pod v1.Placeable) error { return nil }
 
-func (p PodsToCache) ForgetPod(pod *v1.Pod) error { return nil }
+func (p PodsToCache) ForgetPod(pod v1.Placeable) error { return nil }
 
-func (p PodsToCache) AddPod(pod *v1.Pod) error { return nil }
+func (p PodsToCache) AddPod(pod v1.Placeable) error { return nil }
 
-func (p PodsToCache) UpdatePod(oldPod, newPod *v1.Pod) error { return nil }
+func (p PodsToCache) UpdatePod(oldPod, newPod v1.Placeable) error { return nil }
 
-func (p PodsToCache) RemovePod(pod *v1.Pod) error { return nil }
+func (p PodsToCache) RemovePod(pod v1.Placeable) error { return nil }
 
 func (p PodsToCache) AddNode(node *v1.Node) error { return nil }
 
@@ -45,9 +45,9 @@ func (p PodsToCache) UpdateNodeNameToInfoMap(infoMap map[string]*schedulercache.
 	return nil
 }
 
-func (p PodsToCache) List(s labels.Selector) (selected []*v1.Pod, err error) {
+func (p PodsToCache) List(s labels.Selector) (selected []v1.Placeable, err error) {
 	for _, pod := range p {
-		if s.Matches(labels.Set(pod.Labels)) {
+		if s.Matches(labels.Set(pod.GetLabels())) {
 			selected = append(selected, pod)
 		}
 	}
