@@ -1940,7 +1940,7 @@ func (rl *clientConnReadLoop) processSettings(f *SettingsFrame) error {
 		case SettingMaxConcurrentStreams:
 			cc.maxConcurrentStreams = s.Val
 			if DebugMaxConcStreams {
-				cc.logf("CC(%p) Received setting maxConcurrentStreams=%d\n", cc.maxConcurrentStreams)
+				cc.logf("CC(%p) Received setting maxConcurrentStreams=%d\n", cc, cc.maxConcurrentStreams)
 			}
 		case SettingInitialWindowSize:
 			// Values above the maximum flow-control
