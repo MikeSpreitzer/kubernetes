@@ -30,6 +30,8 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/pkg/errors"
+
+	"golang.org/x/net/http2"
 )
 
 const (
@@ -82,6 +84,9 @@ func (s *GenericAPIServer) serveSecurely(stopCh <-chan struct{}) error {
 		secureServer.TLSConfig.ClientCAs = s.SecureServingInfo.ClientCA
 	}
 
+	http2.ConfigureServer(secureServer, &http2.Server{
+		MaxConcurrentStreams: 1701,
+	})
 	glog.Infof("Serving securely on %s", s.SecureServingInfo.BindAddress)
 	var err error
 	s.effectiveSecurePort, err = RunServer(secureServer, s.SecureServingInfo.BindNetwork, stopCh)
