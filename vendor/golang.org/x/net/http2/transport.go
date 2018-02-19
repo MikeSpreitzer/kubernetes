@@ -52,14 +52,14 @@ const (
 
 var	DebugMaxConcStreams bool
 
-var initialMaxConcurrentStreams int = 1000
+var initialMaxConcurrentStreams uint32 = 1000
 
 func init() {
 	imcsStr := os.Getenv("HTTP2_INITIAL_MAX_CONCURRENT_STREAMS")
 	if len(imcsStr) > 0 {
-		i, err := strconv.Atoi(imcsStr)
+		i, err := strconv.ParseUint(imcsStr, 10, 32)
 		if err == nil {
-			initialMaxConcurrentStreams = i
+			initialMaxConcurrentStreams = uint32(i)
 		} else {
 			fmt.Printf("Failed to parse HTTP2_INITIAL_MAX_CONCURRENT_STREAMS=%q: %s\n", imcsStr, err)
 		}
@@ -67,7 +67,7 @@ func init() {
 	e := os.Getenv("GODEBUG")
 	DebugMaxConcStreams = strings.Contains(e, "http2debugMaxConcurrentStreams=1")
 	if DebugMaxConcStreams {
-		glog.V(2).Infof("Initial MaxConcurrentStreams = %d\n", initialMaxConcurrentStreams)
+		fmt.Printf("Initial MaxConcurrentStreams = %d\n", initialMaxConcurrentStreams)
 	}
 }
 
