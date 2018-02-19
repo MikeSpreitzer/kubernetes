@@ -21,12 +21,13 @@ import (
 	mathrand "math/rand"
 	"net"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
+	
 	"golang.org/x/net/http2/hpack"
 	"golang.org/x/net/idna"
 	"golang.org/x/net/lex/httplex"
@@ -48,6 +49,27 @@ const (
 
 	defaultUserAgent = "Go-http-client/2.0"
 )
+
+var	DebugMaxConcStreams bool
+
+var initialMaxConcurrentStreams int = 1000
+
+func init() {
+	imcsStr := os.Getenv("HTTP2_INITIAL_MAX_CONCURRENT_STREAMS")
+	if len(imcsStr) > 0 {
+		i, err := strconv.Atoi(imcsStr)
+		if err == nil {
+			initialMaxConcurrentStreams = i
+		} else {
+			fmt.Printf("Failed to parse HTTP2_INITIAL_MAX_CONCURRENT_STREAMS=%q: %s\n", imcsStr, err)
+		}
+	}
+	e := os.Getenv("GODEBUG")
+	DebugMaxConcStreams = strings.Contains(e, "http2debugMaxConcurrentStreams=1")
+	if DebugMaxConcStreams {
+		glog.V(2).Infof("Initial MaxConcurrentStreams = %d\n", initialMaxConcurrentStreams)
+	}
+}
 
 // Transport is an HTTP/2 Transport.
 //
@@ -525,7 +547,7 @@ func (t *Transport) newClientConn(c net.Conn, singleUse bool) (*ClientConn, erro
 		nextStreamID:         1,
 		maxFrameSize:         16 << 10, // spec default
 		initialWindowSize:    65535,    // spec default
-		maxConcurrentStreams: 1000,     // "infinite", per spec. 1000 seems good enough.
+		maxConcurrentStreams: initialMaxConcurrentStreams,
 		streams:              make(map[uint32]*clientStream),
 		singleUse:            singleUse,
 		wantSettingsAck:      true,
@@ -936,6 +958,7 @@ func (cc *ClientConn) RoundTrip(req *http.Request) (*http.Response, error) {
 func (cc *ClientConn) awaitOpenSlotForRequest(req *http.Request) error {
 	var waitingForConn chan struct{}
 	var waitingForConnErr error // guarded by cc.mu
+	needFinalLog := false
 	for {
 		cc.lastActive = time.Now()
 		if cc.closed || !cc.canTakeNewRequestLocked() {
@@ -944,6 +967,10 @@ func (cc *ClientConn) awaitOpenSlotForRequest(req *http.Request) error {
 		if int64(len(cc.streams))+1 <= int64(cc.maxConcurrentStreams) {
 			if waitingForConn != nil {
 				close(waitingForConn)
+			}
+			if needFinalLog {
+				cc.logf("CC(%p) Got slot for request %#v\n", cc, req)
+				needFinalLog = false
 			}
 			return nil
 		}
@@ -960,6 +987,15 @@ func (cc *ClientConn) awaitOpenSlotForRequest(req *http.Request) error {
 					cc.mu.Unlock()
 				}
 			}()
+		}
+		if DebugMaxConcStreams && !needFinalLog {
+			needFinalLog = true
+			defer func() {
+				if needFinalLog {
+					cc.logf("CC(%p) Failed to get slot for request %#v\n", cc, req)
+				}
+			}()
+			cc.logf("CC(%p) Waiting to get slot for request %#v\n", cc, req)
 		}
 		cc.pendingRequests++
 		cc.cond.Wait()
@@ -1903,6 +1939,9 @@ func (rl *clientConnReadLoop) processSettings(f *SettingsFrame) error {
 			cc.maxFrameSize = s.Val
 		case SettingMaxConcurrentStreams:
 			cc.maxConcurrentStreams = s.Val
+			if DebugMaxConcStreams {
+				cc.logf("CC(%p) Received setting maxConcurrentStreams=%d\n", cc.maxConcurrentStreams)
+			}
 		case SettingInitialWindowSize:
 			// Values above the maximum flow-control
 			// window size of 2^31-1 MUST be treated as a
