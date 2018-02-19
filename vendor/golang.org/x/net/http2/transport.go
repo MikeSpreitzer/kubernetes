@@ -67,7 +67,7 @@ func init() {
 	e := os.Getenv("GODEBUG")
 	DebugMaxConcStreams = strings.Contains(e, "http2debugMaxConcurrentStreams=1")
 	if DebugMaxConcStreams {
-		fmt.Printf("Initial MaxConcurrentStreams = %d\n", initialMaxConcurrentStreams)
+		fmt.Printf("http2: Initial MaxConcurrentStreams = %d\n", initialMaxConcurrentStreams)
 	}
 }
 
@@ -559,6 +559,8 @@ func (t *Transport) newClientConn(c net.Conn, singleUse bool) (*ClientConn, erro
 	}
 	if VerboseLogs {
 		t.vlogf("http2: Transport creating client conn %p to %v", cc, c.RemoteAddr())
+	} else if DebugMaxConcStreams {
+		t.logf("http2: Transport creating client conn %p to %v", cc, c.RemoteAddr())
 	}
 
 	cc.cond = sync.NewCond(&cc.mu)
@@ -992,10 +994,10 @@ func (cc *ClientConn) awaitOpenSlotForRequest(req *http.Request) error {
 			needFinalLog = true
 			defer func() {
 				if needFinalLog {
-					cc.logf("CC(%p) Failed to get slot for request %#v\n", cc, req)
+					cc.logf("http2: CC(%p) Failed to get slot for request %#v\n", cc, req)
 				}
 			}()
-			cc.logf("CC(%p) Waiting to get slot for request %#v\n", cc, req)
+			cc.logf("http2: CC(%p) Waiting to get slot for request %#v\n", cc, req)
 		}
 		cc.pendingRequests++
 		cc.cond.Wait()
@@ -1940,7 +1942,7 @@ func (rl *clientConnReadLoop) processSettings(f *SettingsFrame) error {
 		case SettingMaxConcurrentStreams:
 			cc.maxConcurrentStreams = s.Val
 			if DebugMaxConcStreams {
-				cc.logf("CC(%p) Received setting maxConcurrentStreams=%d\n", cc, cc.maxConcurrentStreams)
+				cc.logf("http2: CC(%p) Received setting maxConcurrentStreams=%d\n", cc, cc.maxConcurrentStreams)
 			}
 		case SettingInitialWindowSize:
 			// Values above the maximum flow-control
