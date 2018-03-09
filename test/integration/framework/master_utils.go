@@ -195,8 +195,6 @@ func startMasterOrDie(masterConfig *master.Config, incomingServer *httptest.Serv
 
 	if masterConfig == nil {
 		masterConfig = NewMasterConfig()
-		masterConfig.GenericConfig.EnableProfiling = true
-		masterConfig.GenericConfig.EnableMetrics = true
 		masterConfig.GenericConfig.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(openapi.GetOpenAPIDefinitions, api.Scheme)
 		masterConfig.GenericConfig.OpenAPIConfig.Info = &spec.Info{
 			InfoProps: spec.InfoProps{
@@ -289,6 +287,15 @@ func startMasterOrDie(masterConfig *master.Config, incomingServer *httptest.Serv
 	return m, s, closeFn
 }
 
+// Returns the master config appropriate for most integration tests.
+func NewIntegrationTestMasterConfig() *master.Config {
+	masterConfig := NewMasterConfig()
+	masterConfig.ExtraConfig.EnableCoreControllers = true
+	masterConfig.GenericConfig.PublicAddress = net.ParseIP("192.168.10.4")
+	masterConfig.ExtraConfig.APIResourceConfigSource = master.DefaultAPIResourceConfigSource()
+	return masterConfig
+}
+
 // Returns a basic master config.
 func NewMasterConfig() *master.Config {
 	// This causes the integration tests to exercise the etcd
@@ -349,7 +356,6 @@ func NewMasterConfig() *master.Config {
 	genericConfig.Version = &kubeVersion
 	genericConfig.Authorizer = authorizerfactory.NewAlwaysAllowAuthorizer()
 	genericConfig.AdmissionControl = admit.NewAlwaysAdmit()
-	genericConfig.EnableMetrics = true
 
 	err := etcdOptions.ApplyWithStorageFactoryTo(storageFactory, genericConfig)
 	if err != nil {
@@ -367,15 +373,6 @@ func NewMasterConfig() *master.Config {
 			MasterCount:             1,
 		},
 	}
-}
-
-// Returns the master config appropriate for most integration tests.
-func NewIntegrationTestMasterConfig() *master.Config {
-	masterConfig := NewMasterConfig()
-	masterConfig.ExtraConfig.EnableCoreControllers = true
-	masterConfig.GenericConfig.PublicAddress = net.ParseIP("192.168.10.4")
-	masterConfig.ExtraConfig.APIResourceConfigSource = master.DefaultAPIResourceConfigSource()
-	return masterConfig
 }
 
 func (m *MasterComponents) stopRCManager() {
@@ -462,7 +459,6 @@ func RunAMaster(masterConfig *master.Config) (*master.Master, *httptest.Server, 
 	if masterConfig == nil {
 		masterConfig = NewMasterConfig()
 		masterConfig.GenericConfig.EnableProfiling = true
-		masterConfig.GenericConfig.EnableMetrics = true
 	}
 	return startMasterOrDie(masterConfig, nil, nil)
 }
