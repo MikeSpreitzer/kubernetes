@@ -6,7 +6,7 @@ metadata:
   labels:
     apiserver: "true"
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     apiserver: "true"
   template:
@@ -15,15 +15,16 @@ spec:
         apiserver: "true"
     spec:
       serviceAccountName: apiserver
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                etcdserver: "true"
       containers:
       - name: wardle-server
-        image: mspreitz/kube-sample-apiserver:release-1.8
+        image: mspreitz/kube-sample-apiserver:git-f0d1c65a0e766245a1dcd3c55a42d519bea9cf10
         imagePullPolicy: IfNotPresent
         args:
-        - "--etcd-servers=http://localhost:2379"
+        - --etcd-servers=http://etcd.wardle.svc.cluster.local:2379
         - -v=5
-      - name: etcd
-        image: quay.io/coreos/etcd:v3.2.15
-        command:
-        - /usr/local/bin/etcd
-        - --debug
