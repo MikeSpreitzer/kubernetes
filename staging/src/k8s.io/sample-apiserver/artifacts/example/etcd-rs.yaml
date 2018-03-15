@@ -16,9 +16,12 @@ spec:
         etcdserver: "true"
     spec:
       serviceAccountName: apiserver
+      nodeName: k8s2comp69
       containers:
       - name: etcd
         image: quay.io/coreos/etcd:v3.2.15
         command:
         - /usr/local/bin/etcd
+        - --listen-client-urls=http://0.0.0.0:2379
+        - --advertise-client-urls=http://etcd.wardle.svc.cluster.local:2379
         - --debug

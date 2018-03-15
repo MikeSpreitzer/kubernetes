@@ -15,16 +15,12 @@ spec:
         apiserver: "true"
     spec:
       serviceAccountName: apiserver
-      affinity:
-        podAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchLabels:
-                etcdserver: "true"
+      nodeName: k8s2comp69
       containers:
       - name: wardle-server
         image: mspreitz/kube-sample-apiserver:git-f0d1c65a0e766245a1dcd3c55a42d519bea9cf10
         imagePullPolicy: IfNotPresent
         args:
         - --etcd-servers=http://etcd.wardle.svc.cluster.local:2379
+        - --default-watch-cache-size=1000
         - -v=5
