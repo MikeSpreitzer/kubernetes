@@ -51,6 +51,26 @@ func (_ prometheusMetricsProvider) NewAddsMetric(name string) workqueue.CounterM
 	return adds
 }
 
+func (_ prometheusMetricsProvider) NewGetsMetric(name string) workqueue.CounterMetric {
+	counter := prometheus.NewCounter(prometheus.CounterOpts{
+		Subsystem: name,
+		Name:      "gets",
+		Help:      "Total number of gets handled by workqueue: " + name,
+	})
+	prometheus.Register(counter)
+	return counter
+}
+
+func (_ prometheusMetricsProvider) NewDonesMetric(name string) workqueue.CounterMetric {
+	counter := prometheus.NewCounter(prometheus.CounterOpts{
+		Subsystem: name,
+		Name:      "dones",
+		Help:      "Total number of dones handled by workqueue: " + name,
+	})
+	prometheus.Register(counter)
+	return counter
+}
+
 func (_ prometheusMetricsProvider) NewLatencyMetric(name string) workqueue.SummaryMetric {
 	latency := prometheus.NewSummary(prometheus.SummaryOpts{
 		Subsystem: name,

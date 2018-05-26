@@ -59,6 +59,10 @@ type defaultQueueMetrics struct {
 	depth GaugeMetric
 	// total number of adds handled by a workqueue
 	adds CounterMetric
+	// total number of gets that returned something
+	gets CounterMetric
+	// total number of dones
+	dones CounterMetric
 	// how long an item stays in a workqueue
 	latency SummaryMetric
 	// how long processing an item from a workqueue takes
@@ -85,6 +89,7 @@ func (m *defaultQueueMetrics) get(item t) {
 	}
 
 	m.depth.Dec()
+	m.gets.Inc()
 	m.processingStartTimes[item] = time.Now()
 	if startTime, exists := m.addTimes[item]; exists {
 		m.latency.Observe(sinceInMicroseconds(startTime))
@@ -97,6 +102,7 @@ func (m *defaultQueueMetrics) done(item t) {
 		return
 	}
 
+	m.dones.Inc()
 	if startTime, exists := m.processingStartTimes[item]; exists {
 		m.workDuration.Observe(sinceInMicroseconds(startTime))
 		delete(m.processingStartTimes, item)
@@ -128,6 +134,8 @@ func (m *defaultRetryMetrics) retry() {
 type MetricsProvider interface {
 	NewDepthMetric(name string) GaugeMetric
 	NewAddsMetric(name string) CounterMetric
+	NewGetsMetric(name string) CounterMetric
+	NewDonesMetric(name string) CounterMetric
 	NewLatencyMetric(name string) SummaryMetric
 	NewWorkDurationMetric(name string) SummaryMetric
 	NewRetriesMetric(name string) CounterMetric
@@ -140,6 +148,14 @@ func (_ noopMetricsProvider) NewDepthMetric(name string) GaugeMetric {
 }
 
 func (_ noopMetricsProvider) NewAddsMetric(name string) CounterMetric {
+	return noopMetric{}
+}
+
+func (_ noopMetricsProvider) NewGetsMetric(name string) CounterMetric {
+	return noopMetric{}
+}
+
+func (_ noopMetricsProvider) NewDonesMetric(name string) CounterMetric {
 	return noopMetric{}
 }
 
@@ -170,6 +186,8 @@ func newQueueMetrics(name string) queueMetrics {
 	return &defaultQueueMetrics{
 		depth:                metricsFactory.metricsProvider.NewDepthMetric(name),
 		adds:                 metricsFactory.metricsProvider.NewAddsMetric(name),
+		gets:                 metricsFactory.metricsProvider.NewGetsMetric(name),
+		dones:                metricsFactory.metricsProvider.NewDonesMetric(name),
 		latency:              metricsFactory.metricsProvider.NewLatencyMetric(name),
 		workDuration:         metricsFactory.metricsProvider.NewWorkDurationMetric(name),
 		addTimes:             map[t]time.Time{},

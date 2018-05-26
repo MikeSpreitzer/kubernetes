@@ -151,10 +151,10 @@ func (e *quotaEvaluator) doWork() {
 		if quit {
 			return true
 		}
-		defer e.completeWork(ns)
 		if len(admissionAttributes) == 0 {
 			return false
 		}
+		defer e.completeWork(ns)
 		e.checkAttributes(ns, admissionAttributes)
 		return false
 	}
