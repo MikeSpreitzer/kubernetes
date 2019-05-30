@@ -61,6 +61,10 @@ const (
 	// This is the "new" Proxier, so we require "new" versions of tools.
 	iptablesMinVersion = utiliptables.MinCheckVersion
 
+	// iptablesRandomFullyVersion is the minimum iptables version that supports
+	// the --random-fully flag on `-j MASQUERADE`.
+	iptablesRandomFullyVersion = "1.6.2"
+
 	// the services chain
 	kubeServicesChain utiliptables.Chain = "KUBE-SERVICES"
 
@@ -225,17 +229,18 @@ type Proxier struct {
 	syncRunner      *async.BoundedFrequencyRunner // governs calls to syncProxyRules
 
 	// These are effectively const and do not need the mutex to be held.
-	iptables       utiliptables.Interface
-	masqueradeAll  bool
-	masqueradeMark string
-	exec           utilexec.Interface
-	clusterCIDR    string
-	hostname       string
-	nodeIP         net.IP
-	portMapper     utilproxy.PortOpener
-	recorder       record.EventRecorder
-	healthChecker  healthcheck.Server
-	healthzServer  healthcheck.HealthzUpdater
+	iptables              utiliptables.Interface
+	masqueradeRandomFully bool
+	masqueradeAll         bool
+	masqueradeMark        string
+	exec                  utilexec.Interface
+	clusterCIDR           string
+	hostname              string
+	nodeIP                net.IP
+	portMapper            utilproxy.PortOpener
+	recorder              record.EventRecorder
+	healthChecker         healthcheck.Server
+	healthzServer         healthcheck.HealthzUpdater
 
 	// Since converting probabilities (floats) to strings is expensive
 	// and we are using only probabilities in the format of 1/n, we are
@@ -308,6 +313,20 @@ func NewProxier(ipt utiliptables.Interface,
 		klog.Warning("missing br-netfilter module or unset sysctl br-nf-call-iptables; proxy may not work as intended")
 	}
 
+	masqueradeRandomFully := false
+	iptVersionString, err := ipt.GetVersion()
+	if err != nil {
+		klog.Warningf("Unable to get iptables version string: %v", err)
+	} else {
+		iptVersion, err := utilversion.ParseGeneric(iptVersionString)
+		if err != nil {
+			klog.Warningf("Unable to parse iptables version string %q: %v", iptVersionString, err)
+		} else {
+			needVersion, err := utilversion.ParseGeneric(iptablesRandomFullyVersion)
+			masqueradeRandomFully = err == nil && iptVersion.AtLeast(needVersion)
+		}
+	}
+
 	// Generate the masquerade mark to use for SNAT rules.
 	masqueradeValue := 1 << uint(masqueradeBit)
 	masqueradeMark := fmt.Sprintf("%#08x/%#08x", masqueradeValue, masqueradeValue)
@@ -333,6 +352,7 @@ func NewProxier(ipt utiliptables.Interface,
 		endpointsMap:             make(proxy.EndpointsMap),
 		endpointsChanges:         proxy.NewEndpointChangeTracker(hostname, newEndpointInfo, &isIPv6, recorder),
 		iptables:                 ipt,
+		masqueradeRandomFully:    masqueradeRandomFully,
 		masqueradeAll:            masqueradeAll,
 		masqueradeMark:           masqueradeMark,
 		exec:                     exec,
@@ -772,12 +792,19 @@ func (proxier *Proxier) syncProxyRules() {
 	// Install the kubernetes-specific postrouting rules. We use a whole chain for
 	// this so that it is easier to flush and change, for example if the mark
 	// value should ever change.
-	writeLine(proxier.natRules, []string{
+	masqRule := []string{
 		"-A", string(kubePostroutingChain),
 		"-m", "comment", "--comment", `"kubernetes service traffic requiring SNAT"`,
 		"-m", "mark", "--mark", proxier.masqueradeMark,
 		"-j", "MASQUERADE",
-	}...)
+	}
+	if proxier.masqueradeRandomFully {
+		// Work around Linux kernel bug that sometimes causes multiple
+		// flows to get mapped to the same IP:PORT and consequently
+		// some suffer packet drops.
+		masqRule = append(masqRule, "--random-fully")
+	}
+	writeLine(proxier.natRules, masqRule...)
 
 	// Install the kubernetes-specific masquerade mark rule. We use a whole chain for
 	// this so that it is easier to flush and change, for example if the mark

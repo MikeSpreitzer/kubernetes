@@ -33,6 +33,7 @@ import (
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/proxy"
@@ -50,6 +51,10 @@ import (
 )
 
 const (
+	// iptablesRandomFullyVersion is the minimum iptables version that supports
+	// the --random-fully flag on `-j MASQUERADE`.
+	iptablesRandomFullyVersion = "1.6.2"
+
 	// kubeServicesChain is the services portal chain
 	kubeServicesChain utiliptables.Chain = "KUBE-SERVICES"
 
@@ -196,21 +201,22 @@ type Proxier struct {
 	// Values are CIDR's to exclude when cleaning up IPVS rules.
 	excludeCIDRs []*net.IPNet
 	// Set to true to set sysctls arp_ignore and arp_announce
-	strictARP      bool
-	iptables       utiliptables.Interface
-	ipvs           utilipvs.Interface
-	ipset          utilipset.Interface
-	exec           utilexec.Interface
-	masqueradeAll  bool
-	masqueradeMark string
-	clusterCIDR    string
-	hostname       string
-	nodeIP         net.IP
-	portMapper     utilproxy.PortOpener
-	recorder       record.EventRecorder
-	healthChecker  healthcheck.Server
-	healthzServer  healthcheck.HealthzUpdater
-	ipvsScheduler  string
+	strictARP             bool
+	iptables              utiliptables.Interface
+	ipvs                  utilipvs.Interface
+	ipset                 utilipset.Interface
+	exec                  utilexec.Interface
+	masqueradeRandomFully bool
+	masqueradeAll         bool
+	masqueradeMark        string
+	clusterCIDR           string
+	hostname              string
+	nodeIP                net.IP
+	portMapper            utilproxy.PortOpener
+	recorder              record.EventRecorder
+	healthChecker         healthcheck.Server
+	healthzServer         healthcheck.HealthzUpdater
+	ipvsScheduler         string
 	// Added as a member to the struct to allow injection for testing.
 	ipGetter IPGetter
 	// The following buffers are used to reuse memory and avoid allocations
@@ -378,6 +384,20 @@ func NewProxier(ipt utiliptables.Interface,
 		}
 	}
 
+	masqueradeRandomFully := false
+	iptVersionString, err := ipt.GetVersion()
+	if err != nil {
+		klog.Warningf("Unable to get iptables version string: %v", err)
+	} else {
+		iptVersion, err := utilversion.ParseGeneric(iptVersionString)
+		if err != nil {
+			klog.Warningf("Unable to parse iptables version string %q: %v", iptVersionString, err)
+		} else {
+			needVersion, err := utilversion.ParseGeneric(iptablesRandomFullyVersion)
+			masqueradeRandomFully = err == nil && iptVersion.AtLeast(needVersion)
+		}
+	}
+
 	// Generate the masquerade mark to use for SNAT rules.
 	masqueradeValue := 1 << uint(masqueradeBit)
 	masqueradeMark := fmt.Sprintf("%#08x/%#08x", masqueradeValue, masqueradeValue)
@@ -414,6 +434,7 @@ func NewProxier(ipt utiliptables.Interface,
 		minSyncPeriod:         minSyncPeriod,
 		excludeCIDRs:          parseExcludedCIDRs(excludeCIDRs),
 		iptables:              ipt,
+		masqueradeRandomFully: masqueradeRandomFully,
 		masqueradeAll:         masqueradeAll,
 		masqueradeMark:        masqueradeMark,
 		exec:                  exec,
@@ -1495,12 +1516,19 @@ func (proxier *Proxier) createAndLinkeKubeChain() {
 	// Install the kubernetes-specific postrouting rules. We use a whole chain for
 	// this so that it is easier to flush and change, for example if the mark
 	// value should ever change.
-	writeLine(proxier.natRules, []string{
+	masqRule := []string{
 		"-A", string(kubePostroutingChain),
 		"-m", "comment", "--comment", `"kubernetes service traffic requiring SNAT"`,
 		"-m", "mark", "--mark", proxier.masqueradeMark,
 		"-j", "MASQUERADE",
-	}...)
+	}
+	if proxier.masqueradeRandomFully {
+		// Work around Linux kernel bug that sometimes causes multiple
+		// flows to get mapped to the same IP:PORT and consequently
+		// some suffer packet drops.
+		masqRule = append(masqRule, "--random-fully")
+	}
+	writeLine(proxier.natRules, masqRule...)
 
 	// Install the kubernetes-specific masquerade mark rule. We use a whole chain for
 	// this so that it is easier to flush and change, for example if the mark
