@@ -61,6 +61,8 @@ const (
 	// This is the "new" Proxier, so we require "new" versions of tools.
 	iptablesMinVersion = utiliptables.MinCheckVersion
 
+	// iptablesRandomFullyVersion is the minimum iptables version that supports
+	// the --random-fully flag on `-j MASQUERADE`.
 	iptablesRandomFullyVersion = "1.6.2"
 
 	// the services chain
