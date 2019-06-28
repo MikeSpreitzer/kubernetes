@@ -41,14 +41,22 @@ type Rule map[string]string
 
 // no-op implementation of iptables Interface
 type FakeIPTables struct {
-	Lines []byte
+	Lines   []byte
+	Version string
 }
 
 func NewFake() *FakeIPTables {
 	return &FakeIPTables{}
 }
 
-func (*FakeIPTables) GetVersion() (string, error) {
+func NewVersionedFake(version string) *FakeIPTables {
+	return &FakeIPTables{Version: version}
+}
+
+func (f *FakeIPTables) GetVersion() (string, error) {
+	if f.Version != "" {
+		return f.Version, nil
+	}
 	return "0.0.0", nil
 }
 

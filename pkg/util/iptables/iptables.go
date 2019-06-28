@@ -129,6 +129,39 @@ const WaitSecondsMinVersion = "1.4.22"
 const WaitString = "-w"
 const WaitSecondsValue = "5"
 
+// MinMasqueradeFullyVersion is the minimum iptables version that supports the `--random-fully` modifier on `-j MASQUERADE`
+const MinMasqueradeRandomFullyVersion = "1.6.2"
+
+type TestOutcome struct {
+	Answer bool
+	Err    error
+}
+
+// VersionStringIsAtLeast compares two alleged version strings
+func VersionStringIsAtLeast(versionStr, minVersionStr string) TestOutcome {
+	version, err := utilversion.ParseGeneric(versionStr)
+	if err != nil {
+		klog.Warningf("%q is not a valid version string: %v", versionStr, err)
+		return TestOutcome{false, err}
+	}
+	minVersion, err := utilversion.ParseGeneric(minVersionStr)
+	if err != nil {
+		klog.Warningf("%q is not a valid version string: %v", minVersionStr, err)
+		return TestOutcome{false, err}
+	}
+	return TestOutcome{version.AtLeast(minVersion), nil}
+}
+
+// VersionIsAtLeast tests whether the version of the given item is at least the given bound
+func VersionIsAtLeast(ifc interface{ GetVersion() (string, error) }, minVersionStr string) TestOutcome {
+	versionStr, err := ifc.GetVersion()
+	if err != nil {
+		klog.Warningf("Unable to determine version string: %v", err)
+		return TestOutcome{false, err}
+	}
+	return VersionStringIsAtLeast(versionStr, minVersionStr)
+}
+
 const LockfilePath16x = "/run/xtables.lock"
 
 // runner implements Interface in terms of exec("iptables").
@@ -541,42 +574,16 @@ func makeFullArgs(table Table, chain Chain, args ...string) []string {
 
 // Checks if iptables has the "-C" flag
 func getIPTablesHasCheckCommand(vstring string) bool {
-	minVersion, err := utilversion.ParseGeneric(MinCheckVersion)
-	if err != nil {
-		klog.Errorf("MinCheckVersion (%s) is not a valid version string: %v", MinCheckVersion, err)
-		return true
-	}
-	version, err := utilversion.ParseGeneric(vstring)
-	if err != nil {
-		klog.Errorf("vstring (%s) is not a valid version string: %v", vstring, err)
-		return true
-	}
-	return version.AtLeast(minVersion)
+	outcome := VersionStringIsAtLeast(vstring, MinCheckVersion)
+	return outcome.Answer && outcome.Err == nil
 }
 
 // Checks if iptables version has a "wait" flag
 func getIPTablesWaitFlag(vstring string) []string {
-	version, err := utilversion.ParseGeneric(vstring)
-	if err != nil {
-		klog.Errorf("vstring (%s) is not a valid version string: %v", vstring, err)
+	if !VersionStringIsAtLeast(vstring, WaitMinVersion).Answer {
 		return nil
 	}
-
-	minVersion, err := utilversion.ParseGeneric(WaitMinVersion)
-	if err != nil {
-		klog.Errorf("WaitMinVersion (%s) is not a valid version string: %v", WaitMinVersion, err)
-		return nil
-	}
-	if version.LessThan(minVersion) {
-		return nil
-	}
-
-	minVersion, err = utilversion.ParseGeneric(WaitSecondsMinVersion)
-	if err != nil {
-		klog.Errorf("WaitSecondsMinVersion (%s) is not a valid version string: %v", WaitSecondsMinVersion, err)
-		return nil
-	}
-	if version.LessThan(minVersion) {
+	if !VersionStringIsAtLeast(vstring, WaitSecondsMinVersion).Answer {
 		return []string{WaitString}
 	}
 	return []string{WaitString, WaitSecondsValue}

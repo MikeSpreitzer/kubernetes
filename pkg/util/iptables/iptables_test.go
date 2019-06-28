@@ -57,10 +57,13 @@ func testIPTablesVersionCmds(t *testing.T, protocol Protocol) {
 			func() ([]byte, error) { return []byte(iptablesRestoreCmd + version), nil },
 			// iptables version  response (for call to runner.GetVersion())
 			func() ([]byte, error) { return []byte(iptablesCmd + version), nil },
+			// iptables version  response (for call to VersionIsAtLeast())
+			func() ([]byte, error) { return []byte(iptablesCmd + version), nil },
 		},
 	}
 	fexec := fakeexec.FakeExec{
 		CommandScript: []fakeexec.FakeCommandAction{
+			func(cmd string, args ...string) exec.Cmd { return fakeexec.InitFakeCmd(&fcmd, cmd, args...) },
 			func(cmd string, args ...string) exec.Cmd { return fakeexec.InitFakeCmd(&fcmd, cmd, args...) },
 			func(cmd string, args ...string) exec.Cmd { return fakeexec.InitFakeCmd(&fcmd, cmd, args...) },
 			func(cmd string, args ...string) exec.Cmd { return fakeexec.InitFakeCmd(&fcmd, cmd, args...) },
@@ -87,6 +90,16 @@ func testIPTablesVersionCmds(t *testing.T, protocol Protocol) {
 	// Check that proper iptables version command was used for runner.GetVersion
 	if !sets.NewString(fcmd.CombinedOutputLog[2]...).HasAll(iptablesCmd, "--version") {
 		t.Errorf("%s GetVersion: Expected cmd '%s --version', Got '%s'", protoStr, iptablesCmd, fcmd.CombinedOutputLog[2])
+	}
+
+	versionOutcome := VersionIsAtLeast(runner, MinMasqueradeRandomFullyVersion)
+	if versionOutcome.Err != nil || !versionOutcome.Answer {
+		t.Errorf("%s VersionIsAtLeast(%q) returned %v", protoStr, MinMasqueradeRandomFullyVersion, versionOutcome)
+	}
+
+	// Check that proper iptables version command was used for runner.GetVersion
+	if !sets.NewString(fcmd.CombinedOutputLog[3]...).HasAll(iptablesCmd, "--version") {
+		t.Errorf("%s GetVersion: Expected cmd '%s --version', Got '%s'", protoStr, iptablesCmd, fcmd.CombinedOutputLog[3])
 	}
 }
 

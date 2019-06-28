@@ -33,7 +33,6 @@ import (
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
-	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/proxy"
@@ -51,10 +50,6 @@ import (
 )
 
 const (
-	// iptablesRandomFullyVersion is the minimum iptables version that supports
-	// the --random-fully flag on `-j MASQUERADE`.
-	iptablesRandomFullyVersion = "1.6.2"
-
 	// kubeServicesChain is the services portal chain
 	kubeServicesChain utiliptables.Chain = "KUBE-SERVICES"
 
@@ -384,19 +379,7 @@ func NewProxier(ipt utiliptables.Interface,
 		}
 	}
 
-	masqueradeRandomFully := false
-	iptVersionString, err := ipt.GetVersion()
-	if err != nil {
-		klog.Warningf("Unable to get iptables version string: %v", err)
-	} else {
-		iptVersion, err := utilversion.ParseGeneric(iptVersionString)
-		if err != nil {
-			klog.Warningf("Unable to parse iptables version string %q: %v", iptVersionString, err)
-		} else {
-			needVersion, err := utilversion.ParseGeneric(iptablesRandomFullyVersion)
-			masqueradeRandomFully = err == nil && iptVersion.AtLeast(needVersion)
-		}
-	}
+	canRandomFully := utiliptables.VersionIsAtLeast(ipt, utiliptables.MinMasqueradeRandomFullyVersion)
 
 	// Generate the masquerade mark to use for SNAT rules.
 	masqueradeValue := 1 << uint(masqueradeBit)
@@ -434,7 +417,7 @@ func NewProxier(ipt utiliptables.Interface,
 		minSyncPeriod:         minSyncPeriod,
 		excludeCIDRs:          parseExcludedCIDRs(excludeCIDRs),
 		iptables:              ipt,
-		masqueradeRandomFully: masqueradeRandomFully,
+		masqueradeRandomFully: canRandomFully.Answer,
 		masqueradeAll:         masqueradeAll,
 		masqueradeMark:        masqueradeMark,
 		exec:                  exec,

@@ -36,7 +36,6 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/proxy"
@@ -60,10 +59,6 @@ const (
 	// the same as the args we read back (iptables itself normalizes some args).
 	// This is the "new" Proxier, so we require "new" versions of tools.
 	iptablesMinVersion = utiliptables.MinCheckVersion
-
-	// iptablesRandomFullyVersion is the minimum iptables version that supports
-	// the --random-fully flag on `-j MASQUERADE`.
-	iptablesRandomFullyVersion = "1.6.2"
 
 	// the services chain
 	kubeServicesChain utiliptables.Chain = "KUBE-SERVICES"
@@ -105,20 +100,9 @@ type KernelCompatTester interface {
 // an error if it fails to get the iptables version without error, in which
 // case it will also return false.
 func CanUseIPTablesProxier(iptver Versioner, kcompat KernelCompatTester) (bool, error) {
-	minVersion, err := utilversion.ParseGeneric(iptablesMinVersion)
-	if err != nil {
-		return false, err
-	}
-	versionString, err := iptver.GetVersion()
-	if err != nil {
-		return false, err
-	}
-	version, err := utilversion.ParseGeneric(versionString)
-	if err != nil {
-		return false, err
-	}
-	if version.LessThan(minVersion) {
-		return false, nil
+	outcome := utiliptables.VersionIsAtLeast(iptver, iptablesMinVersion)
+	if outcome.Err != nil || !outcome.Answer {
+		return false, outcome.Err
 	}
 
 	// Check that the kernel supports what we need.
@@ -313,19 +297,7 @@ func NewProxier(ipt utiliptables.Interface,
 		klog.Warning("missing br-netfilter module or unset sysctl br-nf-call-iptables; proxy may not work as intended")
 	}
 
-	masqueradeRandomFully := false
-	iptVersionString, err := ipt.GetVersion()
-	if err != nil {
-		klog.Warningf("Unable to get iptables version string: %v", err)
-	} else {
-		iptVersion, err := utilversion.ParseGeneric(iptVersionString)
-		if err != nil {
-			klog.Warningf("Unable to parse iptables version string %q: %v", iptVersionString, err)
-		} else {
-			needVersion, err := utilversion.ParseGeneric(iptablesRandomFullyVersion)
-			masqueradeRandomFully = err == nil && iptVersion.AtLeast(needVersion)
-		}
-	}
+	canRandomFully := utiliptables.VersionIsAtLeast(ipt, utiliptables.MinMasqueradeRandomFullyVersion)
 
 	// Generate the masquerade mark to use for SNAT rules.
 	masqueradeValue := 1 << uint(masqueradeBit)
@@ -352,7 +324,7 @@ func NewProxier(ipt utiliptables.Interface,
 		endpointsMap:             make(proxy.EndpointsMap),
 		endpointsChanges:         proxy.NewEndpointChangeTracker(hostname, newEndpointInfo, &isIPv6, recorder),
 		iptables:                 ipt,
-		masqueradeRandomFully:    masqueradeRandomFully,
+		masqueradeRandomFully:    canRandomFully.Answer,
 		masqueradeAll:            masqueradeAll,
 		masqueradeMark:           masqueradeMark,
 		exec:                     exec,
