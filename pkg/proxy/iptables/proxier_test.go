@@ -373,6 +373,9 @@ func NewFakeProxier(ipt utiliptables.Interface) *Proxier {
 		endpointsMap:             make(proxy.EndpointsMap),
 		endpointsChanges:         proxy.NewEndpointChangeTracker(testHostname, newEndpointInfo, nil, nil),
 		iptables:                 ipt,
+		masqueradeRandomFully:    utiliptables.VersionIsAtLeast(ipt, utiliptables.MinMasqueradeRandomFullyVersion).Answer,
+		masqueradeAll:            true,
+		masqueradeMark:           "04000/04000",
 		clusterCIDR:              "10.0.0.0/24",
 		hostname:                 testHostname,
 		portsMap:                 make(map[utilproxy.LocalPort]utilproxy.Closeable),
@@ -433,6 +436,15 @@ func hasSrcType(rules []iptablestest.Rule, srcType string) bool {
 		return true
 	}
 
+	return false
+}
+
+func hasMasqRandomFully(rules []iptablestest.Rule) bool {
+	for _, r := range rules {
+		if r[iptablestest.Masquerade] == "--random-fully" {
+			return true
+		}
+	}
 	return false
 }
 
@@ -779,6 +791,28 @@ func TestNodePort(t *testing.T) {
 	kubeNodePortRules := ipt.GetRules(string(kubeNodePortsChain))
 	if !hasJump(kubeNodePortRules, svcChain, "", svcNodePort) {
 		errorf(fmt.Sprintf("Failed to find jump to svc chain %v", svcChain), kubeNodePortRules, t)
+	}
+}
+
+func TestMasqueradeRule(t *testing.T) {
+	for _, testcase := range []struct {
+		iptver string
+		fully  bool
+	}{{"1.6.1", false}, {"1.6.2", true}} {
+		ipt := iptablestest.NewVersionedFake(testcase.iptver)
+		fp := NewFakeProxier(ipt)
+		makeServiceMap(fp)
+		makeEndpointsMap(fp)
+		fp.syncProxyRules()
+
+		postRoutingRules := ipt.GetRules(string(kubePostroutingChain))
+		if !hasJump(postRoutingRules, "MASQUERADE", "", 0) {
+			errorf(fmt.Sprintf("Failed to find -j MASQUERADE in %s chain", kubePostroutingChain), postRoutingRules, t)
+		}
+		if hasMasqRandomFully(postRoutingRules) != testcase.fully {
+			probs := map[bool]string{false: "found", true: "did not find"}
+			errorf(fmt.Sprintf("%s --random-fully in -j MASQUERADE rule in %s chain for iptables version %s", probs[testcase.fully], kubePostroutingChain, testcase.iptver), postRoutingRules, t)
+		}
 	}
 }
 

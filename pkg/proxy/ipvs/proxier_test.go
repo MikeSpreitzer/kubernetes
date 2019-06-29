@@ -127,33 +127,36 @@ func NewFakeProxier(ipt utiliptables.Interface, ipvs utilipvs.Interface, ipset u
 		ipsetList[is.name] = NewIPSet(ipset, is.name, is.setType, false, is.comment)
 	}
 	return &Proxier{
-		exec:              fexec,
-		serviceMap:        make(proxy.ServiceMap),
-		serviceChanges:    proxy.NewServiceChangeTracker(newServiceInfo, nil, nil),
-		endpointsMap:      make(proxy.EndpointsMap),
-		endpointsChanges:  proxy.NewEndpointChangeTracker(testHostname, nil, nil, nil),
-		excludeCIDRs:      excludeCIDRs,
-		iptables:          ipt,
-		ipvs:              ipvs,
-		ipset:             ipset,
-		clusterCIDR:       "10.0.0.0/24",
-		strictARP:         false,
-		hostname:          testHostname,
-		portsMap:          make(map[utilproxy.LocalPort]utilproxy.Closeable),
-		portMapper:        &fakePortOpener{[]*utilproxy.LocalPort{}},
-		healthChecker:     newFakeHealthChecker(),
-		ipvsScheduler:     DefaultScheduler,
-		ipGetter:          &fakeIPGetter{nodeIPs: nodeIPs},
-		iptablesData:      bytes.NewBuffer(nil),
-		filterChainsData:  bytes.NewBuffer(nil),
-		natChains:         bytes.NewBuffer(nil),
-		natRules:          bytes.NewBuffer(nil),
-		filterChains:      bytes.NewBuffer(nil),
-		filterRules:       bytes.NewBuffer(nil),
-		netlinkHandle:     netlinktest.NewFakeNetlinkHandle(),
-		ipsetList:         ipsetList,
-		nodePortAddresses: make([]string, 0),
-		networkInterfacer: proxyutiltest.NewFakeNetwork(),
+		exec:                  fexec,
+		serviceMap:            make(proxy.ServiceMap),
+		serviceChanges:        proxy.NewServiceChangeTracker(newServiceInfo, nil, nil),
+		endpointsMap:          make(proxy.EndpointsMap),
+		endpointsChanges:      proxy.NewEndpointChangeTracker(testHostname, nil, nil, nil),
+		excludeCIDRs:          excludeCIDRs,
+		iptables:              ipt,
+		ipvs:                  ipvs,
+		ipset:                 ipset,
+		masqueradeRandomFully: utiliptables.VersionIsAtLeast(ipt, utiliptables.MinMasqueradeRandomFullyVersion).Answer,
+		masqueradeAll:         true,
+		masqueradeMark:        "04000/04000",
+		clusterCIDR:           "10.0.0.0/24",
+		strictARP:             false,
+		hostname:              testHostname,
+		portsMap:              make(map[utilproxy.LocalPort]utilproxy.Closeable),
+		portMapper:            &fakePortOpener{[]*utilproxy.LocalPort{}},
+		healthChecker:         newFakeHealthChecker(),
+		ipvsScheduler:         DefaultScheduler,
+		ipGetter:              &fakeIPGetter{nodeIPs: nodeIPs},
+		iptablesData:          bytes.NewBuffer(nil),
+		filterChainsData:      bytes.NewBuffer(nil),
+		natChains:             bytes.NewBuffer(nil),
+		natRules:              bytes.NewBuffer(nil),
+		filterChains:          bytes.NewBuffer(nil),
+		filterRules:           bytes.NewBuffer(nil),
+		netlinkHandle:         netlinktest.NewFakeNetlinkHandle(),
+		ipsetList:             ipsetList,
+		nodePortAddresses:     make([]string, 0),
+		networkInterfacer:     proxyutiltest.NewFakeNetwork(),
 	}
 }
 
@@ -753,6 +756,30 @@ func TestClusterIP(t *testing.T) {
 			if destinations[0].Address.String() != epIPv6 || destinations[0].Port != uint16(svcPortV6) {
 				t.Errorf("Unexpected mismatch destinations")
 			}
+		}
+	}
+}
+
+func TestMasqueradeRule(t *testing.T) {
+	for _, testcase := range []struct {
+		iptver string
+		fully  bool
+	}{{"1.6.1", false}, {"1.6.2", true}} {
+		ipt := iptablestest.NewVersionedFake(testcase.iptver)
+		ipvs := ipvstest.NewFake()
+		ipset := ipsettest.NewFake(testIPSetVersion)
+		fp := NewFakeProxier(ipt, ipvs, ipset, nil, nil)
+		makeServiceMap(fp)
+		makeEndpointsMap(fp)
+		fp.syncProxyRules()
+
+		postRoutingRules := ipt.GetRules(string(kubePostroutingChain))
+		if !hasJump(postRoutingRules, "MASQUERADE", "") {
+			t.Errorf("Failed to find -j MASQUERADE in %s chain", kubePostroutingChain)
+		}
+		if hasMasqRandomFully(postRoutingRules) != testcase.fully {
+			probs := map[bool]string{false: "found", true: "did not find"}
+			t.Errorf("%s --random-fully in -j MASQUERADE rule in %s chain for iptables version %s", probs[testcase.fully], kubePostroutingChain, testcase.iptver)
 		}
 	}
 }
@@ -2744,6 +2771,15 @@ func hasJump(rules []iptablestest.Rule, destChain, ipSet string) bool {
 			if strings.Contains(r[iptablestest.MatchSet], ipSet) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func hasMasqRandomFully(rules []iptablestest.Rule) bool {
+	for _, r := range rules {
+		if r[iptablestest.Masquerade] == "--random-fully" {
+			return true
 		}
 	}
 	return false

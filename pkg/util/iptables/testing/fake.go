@@ -35,6 +35,7 @@ const (
 	Recent      = "recent "
 	MatchSet    = "--match-set "
 	SrcType     = "--src-type "
+	Masquerade  = "MASQUERADE "
 )
 
 type Rule map[string]string
@@ -122,7 +123,7 @@ func (f *FakeIPTables) GetRules(chainName string) (rules []Rule) {
 	for _, l := range strings.Split(string(f.Lines), "\n") {
 		if strings.Contains(l, fmt.Sprintf("-A %v", chainName)) {
 			newRule := Rule(map[string]string{})
-			for _, arg := range []string{Destination, Source, DPort, Protocol, Jump, ToDest, Recent, MatchSet, SrcType} {
+			for _, arg := range []string{Destination, Source, DPort, Protocol, Jump, ToDest, Recent, MatchSet, SrcType, Masquerade} {
 				tok := getToken(l, arg)
 				if tok != "" {
 					newRule[arg] = tok
