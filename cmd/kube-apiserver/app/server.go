@@ -499,7 +499,7 @@ func buildGenericConfig(
 	}
 
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.RequestManagement) {
-		genericConfig.RequestManagement = utilflowcontrol.NewRequestManagementSystem(versionedInformers, genericConfig.MaxRequestsInFlight+genericConfig.MaxMutatingRequestsInFlight, genericConfig.RequestTimeout/4, clock.RealClock{})
+		genericConfig.RequestManagement = utilflowcontrol.NewRequestManagementSystem(versionedInformers, nil /* TODO: implement */, genericConfig.MaxRequestsInFlight+genericConfig.MaxMutatingRequestsInFlight, genericConfig.RequestTimeout/4, clock.RealClock{})
 	}
 
 	return

@@ -115,7 +115,7 @@ func (o *RecommendedOptions) ApplyTo(config *server.RecommendedConfig) error {
 		return err
 	}
 	if feature.DefaultFeatureGate.Enabled(features.RequestManagement) {
-		config.RequestManagement = utilflowcontrol.NewRequestManagementSystem(config.SharedInformerFactory, config.MaxRequestsInFlight+config.MaxMutatingRequestsInFlight, config.RequestTimeout/4, clock.RealClock{})
+		config.RequestManagement = utilflowcontrol.NewRequestManagementSystem(config.SharedInformerFactory, nil /* TODO: implement */, config.MaxRequestsInFlight+config.MaxMutatingRequestsInFlight, config.RequestTimeout/4, clock.RealClock{})
 	}
 
 	return nil
