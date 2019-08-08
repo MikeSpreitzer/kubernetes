@@ -153,7 +153,7 @@ func (reqMgmt *requestManagementSystem) digestConfigObjects(newPLs []*rmtypesv1a
 		}
 		newRMState.priorityLevelStates[pl.Name] = state
 	}
-	fsSeq := make(FlowSchemaSequence, len(newFSs))
+	fsSeq := make(FlowSchemaSequence, 0, len(newFSs))
 	for _, fs := range newFSs {
 		if !warnFlowSchemaSpec(fs.Name, &fs.Spec, newRMState.priorityLevelStates, oldRMState.priorityLevelStates) {
 			continue

@@ -29,7 +29,7 @@ func DefaultPriorityLevelConfigurationObjects() []*rmv1a1.PriorityLevelConfigura
 		pl("system-top",
 			rmv1a1.PriorityLevelConfigurationSpec{Exempt: true},
 		),
-		pl("workoad-low", rmv1a1.PriorityLevelConfigurationSpec{
+		pl("workload-low", rmv1a1.PriorityLevelConfigurationSpec{
 			GlobalDefault:            true,
 			AssuredConcurrencyShares: 100,
 			Queues:                   128,
