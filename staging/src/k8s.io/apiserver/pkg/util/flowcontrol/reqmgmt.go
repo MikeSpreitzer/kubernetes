@@ -20,8 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/clock"
-
 	// TODO: decide whether to use the existing metrics, which
 	// categorize according to mutating vs readonly, or make new
 	// metrics because this filter does not pay attention to that
@@ -92,8 +90,6 @@ type priorityLevelState struct {
 // requestManagementSystem holds all the state and infrastructure of
 // this filter
 type requestManagementSystem struct {
-	clk clock.Clock
-
 	queueSetFactory fq.QueueSetFactory
 
 	// configQueue holds TypedConfigObjectReference values, identifying
@@ -135,10 +131,8 @@ func NewRequestManagementSystem(
 	queueSetFactory fq.QueueSetFactory,
 	serverConcurrencyLimit int,
 	requestWaitLimit time.Duration,
-	clk clock.Clock,
 ) Interface {
 	reqMgmt := &requestManagementSystem{
-		clk:                    clk,
 		queueSetFactory:        queueSetFactory,
 		serverConcurrencyLimit: serverConcurrencyLimit,
 		requestWaitLimit:       requestWaitLimit,
