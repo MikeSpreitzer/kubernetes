@@ -154,13 +154,11 @@ func (reqMgmt *requestManagementSystem) digestConfigObjects(newPLs []*rmtypesv1a
 		newRMState.priorityLevelStates[pl.Name] = state
 	}
 	fsSeq := make(FlowSchemaSequence, len(newFSs))
-	var combinedAnalysis matchAnalysis
 	for _, fs := range newFSs {
 		if !warnFlowSchemaSpec(fs.Name, &fs.Spec, newRMState.priorityLevelStates, oldRMState.priorityLevelStates) {
 			continue
 		}
 		fsSeq = append(fsSeq, fs)
-		combinedAnalysis = combinedAnalysis.Or(analyzeFSMatches(fs))
 	}
 	sort.Sort(fsSeq)
 	if nameOfExempt == "" {
@@ -169,13 +167,12 @@ func (reqMgmt *requestManagementSystem) digestConfigObjects(newPLs []*rmtypesv1a
 	if nameOfDefault == "" {
 		nameOfDefault = newRMState.generateDefaultPL()
 	}
-	if !combinedAnalysis.masters.Both() {
-		fsSeq = append(fsSeq, newFSAllObj(nameOfExempt, true, "system:masters"))
-	}
-	if !(combinedAnalysis.authenticated.Both() && combinedAnalysis.unauthenticated.Both()) {
-		fsSeq = append(fsSeq, newFSAllObj(nameOfDefault, false, "system:authenticated", "system:unauthenticated"))
-	}
+	fsSeq = append(fsSeq, newFSAllObj(nameOfExempt, true, "system:masters"))
+	fsSeq = append(fsSeq, newFSAllObj(nameOfDefault, false, "system:authenticated", "system:unauthenticated"))
 	newRMState.flowSchemas = fsSeq
+	for _, fs := range fsSeq {
+		klog.V(5).Infof("Using FlowSchema %s: %#+v", fs.Name, fs.Spec)
+	}
 	for plName, plState := range oldRMState.priorityLevelStates {
 		if newRMState.priorityLevelStates[plName] != nil {
 			// Still desired
@@ -196,18 +193,22 @@ func (reqMgmt *requestManagementSystem) digestConfigObjects(newPLs []*rmtypesv1a
 			}
 		}
 	}
-	for _, plState := range newRMState.priorityLevelStates {
+	for plName, plState := range newRMState.priorityLevelStates {
 		if plState.config.Exempt {
+			klog.V(5).Infof("Using exempt priority level %s: quiescent=%v", plName, plState.emptyHandler != nil)
 			continue
 		}
 		plState.concurrencyLimit = int(math.Ceil(float64(reqMgmt.serverConcurrencyLimit) * float64(plState.config.AssuredConcurrencyShares) / shareSum))
 		if plState.queues == nil {
+			klog.V(5).Infof("Introducing priority level %s: config=%#+v, concurrencyLimit=%d, quiescent=%v", plName, plState.config, plState.concurrencyLimit, plState.emptyHandler != nil)
 			plState.queues = reqMgmt.queueSetFactory.NewQueueSet(plState.concurrencyLimit, int(plState.config.Queues), int(plState.config.QueueLengthLimit), reqMgmt.requestWaitLimit)
 		} else {
+			klog.V(5).Infof("Retaining priority level %s: config=%#+v, concurrencyLimit=%d, quiescent=%v", plName, plState.config, plState.concurrencyLimit, plState.emptyHandler != nil)
 			plState.queues.SetConfiguration(plState.concurrencyLimit, int(plState.config.Queues), int(plState.config.QueueLengthLimit), reqMgmt.requestWaitLimit)
 		}
 	}
 	reqMgmt.curState.Store(newRMState)
+	klog.V(5).Infof("Switched to new RequestManagementState")
 	// We do the following only after updating curState to guarantee
 	// that if Wait returns `quiescent==true` then a fresh load from
 	// curState will yield an requestManagementState that is at least
@@ -265,78 +266,6 @@ func (newRMState *requestManagementState) generateDefaultPL() (nameOfDefault str
 		config: DefaultPriorityLevelConfigurationObjects()[1].Spec,
 	}
 	return
-}
-
-// matchAnalysis summarizes a matching predicate, broken down by
-// Subject and Verb&Object
-type matchAnalysis struct {
-	masters         objectAnalysis
-	authenticated   objectAnalysis
-	unauthenticated objectAnalysis
-}
-
-type objectAnalysis struct {
-	resource    bool // there's a match for any resource, verb, and APIGroup
-	nonResource bool // there's a match for any non-resource URL and verb
-}
-
-func (a matchAnalysis) Or(b matchAnalysis) matchAnalysis {
-	return matchAnalysis{
-		masters:         a.masters.Or(b.masters),
-		authenticated:   a.authenticated.Or(b.authenticated),
-		unauthenticated: a.unauthenticated.Or(b.unauthenticated),
-	}
-}
-
-func (a objectAnalysis) Or(b objectAnalysis) objectAnalysis {
-	return objectAnalysis{
-		resource:    a.resource || b.resource,
-		nonResource: a.nonResource || b.nonResource}
-}
-
-func (a objectAnalysis) Both() bool {
-	return a.resource && a.nonResource
-}
-
-func analyzeFSMatches(fs *rmtypesv1a1.FlowSchema) matchAnalysis {
-	var ans matchAnalysis
-	for _, rws := range fs.Spec.Rules {
-		ans = ans.Or(analyzeRWSMatches(rws))
-	}
-	return ans
-}
-
-func analyzeRWSMatches(rws rmtypesv1a1.PolicyRuleWithSubjects) matchAnalysis {
-	var ans matchAnalysis
-	var oa objectAnalysis
-	if len(rws.Rule.Verbs) != 1 || rws.Rule.Verbs[0] != rmtypesv1a1.VerbAll {
-		return ans
-	}
-	if len(rws.Rule.Resources) > 0 {
-		if len(rws.Rule.APIGroups) != 1 || rws.Rule.APIGroups[0] != rmtypesv1a1.APIGroupAll || len(rws.Rule.Resources) != 1 || rws.Rule.Resources[0] != rmtypesv1a1.ResourceAll {
-			return ans
-		}
-		oa.resource = true
-	} else {
-		if len(rws.Rule.NonResourceURLs) != 1 || rws.Rule.NonResourceURLs[0] != rmtypesv1a1.NonResourceAll {
-			return ans
-		}
-		oa.nonResource = true
-	}
-	for _, subject := range rws.Subjects {
-		if subject.Kind != "Group" {
-			continue
-		}
-		switch subject.Name {
-		case "system:masters":
-			ans.masters = ans.masters.Or(oa)
-		case "system:authenticated":
-			ans.authenticated = ans.authenticated.Or(oa)
-		case "system:unauthenticated":
-			ans.unauthenticated = ans.unauthenticated.Or(oa)
-		}
-	}
-	return ans
 }
 
 type emptyRelay struct {
