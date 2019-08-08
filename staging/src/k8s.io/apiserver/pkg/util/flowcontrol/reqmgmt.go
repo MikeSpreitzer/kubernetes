@@ -142,9 +142,7 @@ func NewRequestManagementSystem(
 		priorityLevelStates: make(map[string]*priorityLevelState),
 	}
 	reqMgmt.curState.Store(emptyRMState)
-	plConfigs := DefaultPriorityLevelConfigurationObjects()
-	fsConfigs := DefaultFlowSchemaObjects()
-	reqMgmt.digestConfigObjects(plConfigs, fsConfigs)
+	reqMgmt.digestConfigObjects(nil, nil)
 	return reqMgmt
 }
 
@@ -176,7 +174,10 @@ func (reqMgmt *requestManagementSystem) Wait(requestDigest RequestDigest) (execu
 }
 
 func (rmState *requestManagementState) pickFlowSchema(rd RequestDigest) *rmtypesv1alpha1.FlowSchema {
-	return nil
+	if len(rmState.flowSchemas) == 0 {
+		return nil
+	}
+	return rmState.flowSchemas[0]
 	// TODO: implement
 }
 
