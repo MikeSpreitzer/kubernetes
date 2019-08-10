@@ -164,7 +164,7 @@ func (reqMgmt *requestManagementSystem) digestConfigObjects(newPLs []*rmtypesv1a
 		nameOfExempt = newRMState.generateExemptPL()
 	}
 	if nameOfDefault == "" {
-		nameOfDefault = newRMState.generateDefaultPL()
+		nameOfDefault = newRMState.generateDefaultPL(&shareSum)
 	}
 	fsSeq = append(fsSeq, newFSAllObj(nameOfExempt, true, "system:masters"))
 	fsSeq = append(fsSeq, newFSAllObj(nameOfDefault, false, "system:authenticated", "system:unauthenticated"))
@@ -248,7 +248,7 @@ func (newRMState *requestManagementState) generateExemptPL() (nameOfExempt strin
 	return
 }
 
-func (newRMState *requestManagementState) generateDefaultPL() (nameOfDefault string) {
+func (newRMState *requestManagementState) generateDefaultPL(shareSum *float64) (nameOfDefault string) {
 	if newRMState.priorityLevelStates["workload-low"] == nil {
 		nameOfDefault = "workload-low"
 	} else {
@@ -264,6 +264,7 @@ func (newRMState *requestManagementState) generateDefaultPL() (nameOfDefault str
 	newRMState.priorityLevelStates[nameOfDefault] = &priorityLevelState{
 		config: DefaultPriorityLevelConfigurationObjects()[1].Spec,
 	}
+	*shareSum += float64(newRMState.priorityLevelStates[nameOfDefault].config.AssuredConcurrencyShares)
 	return
 }
 
