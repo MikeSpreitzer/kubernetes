@@ -137,6 +137,7 @@ func NewRequestManagementSystem(
 		serverConcurrencyLimit: serverConcurrencyLimit,
 		requestWaitLimit:       requestWaitLimit,
 	}
+	klog.V(2).Infof("NewRequestManagementSystem with serverConcurrencyLimit=%d, requestWaitLimit=%s", serverConcurrencyLimit, requestWaitLimit)
 	reqMgmt.initializeConfigController(informerFactory)
 	emptyRMState := &requestManagementState{
 		priorityLevelStates: make(map[string]*priorityLevelState),

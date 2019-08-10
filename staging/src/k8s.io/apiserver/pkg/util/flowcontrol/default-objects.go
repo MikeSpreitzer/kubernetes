@@ -128,7 +128,7 @@ func fs2(name, plName string, matchingPrecedence int32, dmType rmv1a1.FlowDistin
 	return &rmv1a1.FlowSchema{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: rmv1a1.FlowSchemaSpec{
-			PriorityLevelConfiguration: rmv1a1.PriorityLevelConfigurationReference{name},
+			PriorityLevelConfiguration: rmv1a1.PriorityLevelConfigurationReference{plName},
 			MatchingPrecedence:         matchingPrecedence,
 			DistinguisherMethod:        dm,
 			Rules:                      rules},

@@ -70,9 +70,8 @@ func (reqMgmt *requestManagementSystem) Run(stopCh <-chan struct{}) error {
 	if ok := cache.WaitForCacheSync(stopCh, reqMgmt.plInformer.HasSynced, reqMgmt.fsInformer.HasSynced); !ok {
 		return fmt.Errorf("Never achieved initial sync")
 	}
-	go wait.Until(reqMgmt.runWorker, time.Second, stopCh)
-	klog.Info("Started reqmgmt config worker")
-	<-stopCh
+	klog.Info("Running reqmgmt config worker")
+	wait.Until(reqMgmt.runWorker, time.Second, stopCh)
 	klog.Info("Shutting down reqmgmt config worker")
 	return nil
 }
@@ -200,10 +199,10 @@ func (reqMgmt *requestManagementSystem) digestConfigObjects(newPLs []*rmtypesv1a
 		}
 		plState.concurrencyLimit = int(math.Ceil(float64(reqMgmt.serverConcurrencyLimit) * float64(plState.config.AssuredConcurrencyShares) / shareSum))
 		if plState.queues == nil {
-			klog.V(5).Infof("Introducing priority level %s: config=%#+v, concurrencyLimit=%d, quiescent=%v", plName, plState.config, plState.concurrencyLimit, plState.emptyHandler != nil)
+			klog.V(5).Infof("Introducing priority level %s: config=%#+v, concurrencyLimit=%d, quiescent=%v (shares=%v, shareSum=%v)", plName, plState.config, plState.concurrencyLimit, plState.emptyHandler != nil, plState.config.AssuredConcurrencyShares, shareSum)
 			plState.queues = reqMgmt.queueSetFactory.NewQueueSet(plState.concurrencyLimit, int(plState.config.Queues), int(plState.config.QueueLengthLimit), reqMgmt.requestWaitLimit)
 		} else {
-			klog.V(5).Infof("Retaining priority level %s: config=%#+v, concurrencyLimit=%d, quiescent=%v", plName, plState.config, plState.concurrencyLimit, plState.emptyHandler != nil)
+			klog.V(5).Infof("Retaining priority level %s: config=%#+v, concurrencyLimit=%d, quiescent=%v (shares=%v, shareSum=%v)", plName, plState.config, plState.concurrencyLimit, plState.emptyHandler != nil, plState.config.AssuredConcurrencyShares, shareSum)
 			plState.queues.SetConfiguration(plState.concurrencyLimit, int(plState.config.Queues), int(plState.config.QueueLengthLimit), reqMgmt.requestWaitLimit)
 		}
 	}
