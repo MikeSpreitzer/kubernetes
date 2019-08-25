@@ -64,6 +64,7 @@ type hollowNodeConfig struct {
 	UseRealProxier       bool
 	ProxierSyncPeriod    time.Duration
 	ProxierMinSyncPeriod time.Duration
+	SelfLookupTimeout    time.Duration
 }
 
 const (
@@ -86,6 +87,7 @@ func (c *hollowNodeConfig) addFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&c.UseRealProxier, "use-real-proxier", true, "Set to true if you want to use real proxier inside hollow-proxy.")
 	fs.DurationVar(&c.ProxierSyncPeriod, "proxier-sync-period", 30*time.Second, "Period that proxy rules are refreshed in hollow-proxy.")
 	fs.DurationVar(&c.ProxierMinSyncPeriod, "proxier-min-sync-period", 0, "Minimum period that proxy rules are refreshed in hollow-proxy.")
+	fs.DurationVar(&c.SelfLookupTimeout, "self-lookup-timeout", 40*time.Second, "How long the kube-proxy waits for its Node object to become defined")
 }
 
 func (c *hollowNodeConfig) createClientConfigFromFile() (*restclient.Config, error) {
@@ -220,6 +222,7 @@ func run(config *hollowNodeConfig) {
 			config.UseRealProxier,
 			config.ProxierSyncPeriod,
 			config.ProxierMinSyncPeriod,
+			config.SelfLookupTimeout,
 		)
 		if err != nil {
 			klog.Fatalf("Failed to create hollowProxy instance: %v", err)

@@ -68,6 +68,7 @@ func NewHollowProxyOrDie(
 	useRealProxier bool,
 	proxierSyncPeriod time.Duration,
 	proxierMinSyncPeriod time.Duration,
+	selfLookupTimeout time.Duration,
 ) (*HollowProxy, error) {
 	// Create proxier and service/endpoint handlers.
 	var proxier proxy.Provider
@@ -86,7 +87,7 @@ func NewHollowProxyOrDie(
 			0,
 			"10.0.0.0/8",
 			nodeName,
-			utilnode.GetNodeIP(client, nodeName),
+			utilnode.GetNodeIP(client, nodeName, selfLookupTimeout),
 			recorder,
 			nil,
 			[]string{},

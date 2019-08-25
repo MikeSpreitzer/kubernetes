@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apimachinery/pkg/util/runtime"
 )
 
@@ -290,6 +291,37 @@ func ExponentialBackoff(backoff Backoff, condition ConditionFunc) error {
 		time.Sleep(backoff.Step())
 	}
 	return ErrWaitTimeout
+}
+
+// LimitedExponentialBackoff repeats a condition check with exponential backoff and an overall time limit
+//
+// LimitedExponentialBackoff alternates between checking the condition and sleeping.
+// The Step method of the given Backoff is used to determine the lengths of
+// the sleeps, except that a sleep that would cause the whole execution to
+// exceed the given limit is trimmed to respect that limit.
+// If the condition function ever returns true or an error then the iteration
+// stops and the error (if any) from the condition function is returned.
+// If the overall time limit is exceeded then ErrWaitTimeout is returned.
+func LimitedExponentialBackoff(backoff Backoff, limit time.Duration, condition ConditionFunc) error {
+	return testableLimitedExponentialBackoff(backoff, limit, condition, clock.RealClock{})
+}
+
+func testableLimitedExponentialBackoff(backoff Backoff, limit time.Duration, condition ConditionFunc, clk clock.Clock) error {
+	start := clk.Now()
+	for {
+		if ok, err := condition(); err != nil || ok {
+			return err
+		}
+		rem := limit - clk.Since(start)
+		if rem <= 0 {
+			return ErrWaitTimeout
+		}
+		toSleep := backoff.Step()
+		if toSleep > rem {
+			toSleep = rem
+		}
+		clk.Sleep(toSleep)
+	}
 }
 
 // Poll tries a condition func until it returns true, an error, or the timeout

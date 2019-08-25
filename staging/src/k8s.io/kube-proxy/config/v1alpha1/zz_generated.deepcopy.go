@@ -53,6 +53,7 @@ func (in *KubeProxyConfiguration) DeepCopyInto(out *KubeProxyConfiguration) {
 		copy(*out, *in)
 	}
 	out.Winkernel = in.Winkernel
+	out.SelfLookupTimeout = in.SelfLookupTimeout
 	return
 }
 
