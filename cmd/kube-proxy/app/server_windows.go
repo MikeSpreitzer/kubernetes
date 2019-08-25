@@ -106,7 +106,7 @@ func newProxyServer(config *proxyconfigapi.KubeProxyConfiguration, cleanupAndExi
 			int(*config.IPTables.MasqueradeBit),
 			config.ClusterCIDR,
 			hostname,
-			utilnode.GetNodeIP(client, hostname),
+			utilnode.GetNodeIP(client, hostname, config.SelfLookupTimeout.Duration),
 			recorder,
 			healthzUpdater,
 			config.Winkernel,

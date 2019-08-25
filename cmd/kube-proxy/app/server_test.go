@@ -262,6 +262,7 @@ nodePortAddresses:
 			PortRange:          "2-7",
 			UDPIdleTimeout:     metav1.Duration{Duration: 123 * time.Millisecond},
 			NodePortAddresses:  []string{"10.20.30.40/16", "fd00:1::0/64"},
+			SelfLookupTimeout:  metav1.Duration{Duration: 40 * time.Second},
 		}
 
 		options := NewOptions()

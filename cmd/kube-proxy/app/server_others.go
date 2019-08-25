@@ -136,7 +136,7 @@ func newProxyServer(
 	proxyMode := getProxyMode(string(config.Mode), kernelHandler, ipsetInterface, iptables.LinuxKernelCompatTester{})
 	nodeIP := net.ParseIP(config.BindAddress)
 	if nodeIP.IsUnspecified() {
-		nodeIP = utilnode.GetNodeIP(client, hostname)
+		nodeIP = utilnode.GetNodeIP(client, hostname, config.SelfLookupTimeout.Duration)
 		if nodeIP == nil {
 			return nil, fmt.Errorf("unable to get node IP for hostname %s", hostname)
 		}

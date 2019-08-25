@@ -153,6 +153,10 @@ type KubeProxyConfiguration struct {
 	NodePortAddresses []string
 	// winkernel contains winkernel-related configuration options.
 	Winkernel KubeProxyWinkernelConfiguration
+	// selfLookupTimeout is how long the proxy waits for its Node object to become defined.
+	// The proxy needs a specific IP address for itself, and looks first in bindAddress;
+	// if that does not have a specific address then the proxy looks up its own Node.
+	SelfLookupTimeout metav1.Duration
 }
 
 // Currently, three modes of proxy are available in Linux platform: 'userspace' (older, going to be EOL), 'iptables'

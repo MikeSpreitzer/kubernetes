@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apimachinery/pkg/util/runtime"
 )
 
@@ -277,6 +278,86 @@ func TestExponentialBackoff(t *testing.T) {
 	})
 	if err != nil || i != opts.Steps {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestLimitedExponentialBackoff(t *testing.T) {
+	opts := Backoff{Duration: time.Second, Factor: 2.0, Steps: 3}
+
+	start := time.Now()
+	clk := clock.NewFakeClock(start)
+	// waits up to given time, capping duration increases.
+	expectedElapsed := []time.Duration{0 * time.Second, 1 * time.Second,
+		3 * time.Second, 7 * time.Second, 15 * time.Second, 23 * time.Second,
+		25 * time.Second}
+	i := 0
+	err := testableLimitedExponentialBackoff(opts, 25*time.Second, func() (bool, error) {
+		elapsed := clk.Since(start)
+		if elapsed != expectedElapsed[i] {
+			t.Errorf("unexpected elapsed time at check %d: %s", i, elapsed)
+		}
+		i++
+		return false, nil
+	}, clk)
+	if err != ErrWaitTimeout {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if i != 7 {
+		t.Errorf("unexpected number of steps: %v", i)
+	}
+	if elapsed := clk.Since(start); elapsed != 25*time.Second {
+		t.Errorf("unexpected elapsed time: %s", elapsed)
+	}
+	clk = clock.NewFakeClock(start)
+
+	// wait is terminated by successful check at elapsed=23s
+	i = 0
+	err = testableLimitedExponentialBackoff(opts, 25*time.Second, func() (bool, error) {
+		elapsed := clk.Since(start)
+		if elapsed != expectedElapsed[i] {
+			t.Errorf("unexpected elapsed time at check %d: %s", i, elapsed)
+		}
+		i++
+		return i >= 6, nil
+	}, clk)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if i != 6 {
+		t.Errorf("unexpected number of steps: %v", i)
+	}
+	if elapsed := clk.Since(start); elapsed != 23*time.Second {
+		t.Errorf("unexpected elapsed time: %s", elapsed)
+	}
+
+	// returns immediately
+	clk = clock.NewFakeClock(start)
+	i = 0
+	err = testableLimitedExponentialBackoff(opts, 25*time.Second, func() (bool, error) {
+		i++
+		return true, nil
+	}, clk)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if i != 1 {
+		t.Errorf("unexpected number of steps: %v", i)
+	}
+	if elapsed := clk.Since(start); elapsed != 0 {
+		t.Errorf("unexpected elapsed time: %s", elapsed)
+	}
+
+	// returns immediately on error
+	clk = clock.NewFakeClock(start)
+	testErr := fmt.Errorf("some other error")
+	err = testableLimitedExponentialBackoff(opts, time.Minute, func() (bool, error) {
+		return false, testErr
+	}, clk)
+	if err != testErr {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if elapsed := clk.Since(start); elapsed != 0 {
+		t.Errorf("unexpected elapsed time: %s", elapsed)
 	}
 }
 

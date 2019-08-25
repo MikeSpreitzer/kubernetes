@@ -122,6 +122,9 @@ func SetDefaults_KubeProxyConfiguration(obj *kubeproxyconfigv1alpha1.KubeProxyCo
 	if obj.FeatureGates == nil {
 		obj.FeatureGates = make(map[string]bool)
 	}
+	if obj.SelfLookupTimeout.Duration == time.Duration(0) {
+		obj.SelfLookupTimeout = metav1.Duration{Duration: 40 * time.Second}
+	}
 }
 
 // getDefaultAddresses returns default address of healthz and metrics server

@@ -186,6 +186,7 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&o.config.EnableProfiling, "profiling", o.config.EnableProfiling, "If true enables profiling via web interface on /debug/pprof handler.")
 
 	fs.Float32Var(&o.config.ClientConnection.QPS, "kube-api-qps", o.config.ClientConnection.QPS, "QPS to use while talking with kubernetes apiserver")
+	fs.DurationVar(&o.config.SelfLookupTimeout.Duration, "self-lookup-timeout", o.config.SelfLookupTimeout.Duration, "How long the proxy waits for its Node object to become defined")
 }
 
 // NewOptions returns initialized Options
