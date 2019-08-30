@@ -20,11 +20,13 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
+	fcboot "k8s.io/apiserver/pkg/util/flowcontrol/bootstrap"
 	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
 	"k8s.io/apiserver/pkg/util/flowcontrol/metrics"
 	kubeinformers "k8s.io/client-go/informers"
@@ -35,6 +37,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rmtypesv1a1 "k8s.io/api/flowcontrol/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apiserver/pkg/authentication/user"
 )
 
 // initializeConfigController sets up the controller that processes
@@ -75,7 +78,7 @@ func (reqMgr *requestManager) OnDelete(obj interface{}) {
 func (reqMgr *requestManager) Run(stopCh <-chan struct{}) error {
 	defer reqMgr.configQueue.ShutDown()
 	klog.Info("Starting reqmgmt config controller")
-	if ok := cache.WaitForCacheSync(stopCh, reqMgr.readyFunc, reqMgr.plInformerSynced, reqMgr.fsInformerSynced); !ok {
+	if ok := cache.WaitForCacheSync(stopCh, reqMgr.plInformerSynced, reqMgr.fsInformerSynced); !ok {
 		return fmt.Errorf("Never achieved initial sync")
 	}
 	klog.Info("Running reqmgmt config worker")
@@ -133,8 +136,8 @@ func (reqMgr *requestManager) digestConfigObjects(newPLs []*rmtypesv1a1.Priority
 		priorityLevelStates: make(map[string]*priorityLevelState),
 	}
 	newlyQuiescent := make([]*priorityLevelState, 0)
-	plByName := map[string]*rmtypesv1a1.PriorityLevelConfiguration{}
-	for i, pl := range newPLs {
+	exemptPLName, defaultPLName := "", ""
+	for _, pl := range newPLs {
 		state := oldRMState.priorityLevelStates[pl.Name]
 		if state == nil {
 			state = &priorityLevelState{
@@ -150,11 +153,15 @@ func (reqMgr *requestManager) digestConfigObjects(newPLs []*rmtypesv1a1.Priority
 				state.queues.Quiesce(nil)
 			}
 		}
-		if !pl.Spec.Exempt {
+		if pl.Spec.Exempt {
+			exemptPLName = pl.Name
+		} else {
 			shareSum += float64(state.config.AssuredConcurrencyShares)
 		}
+		if pl.Spec.GlobalDefault {
+			defaultPLName = pl.Name
+		}
 		newRMState.priorityLevelStates[pl.Name] = state
-		plByName[pl.Name] = newPLs[i]
 	}
 
 	fsSeq := make(rmtypesv1a1.FlowSchemaSequence, 0, len(newFSs))
@@ -166,13 +173,7 @@ func (reqMgr *requestManager) digestConfigObjects(newPLs []*rmtypesv1a1.Priority
 		}
 	}
 	sort.Sort(fsSeq)
-	newRMState.flowSchemas = fsSeq
 
-	if klog.V(5) {
-		for _, fs := range fsSeq {
-			klog.Infof("Using FlowSchema %s: %#+v", fs.Name, fs.Spec)
-		}
-	}
 	for plName, plState := range oldRMState.priorityLevelStates {
 		if newRMState.priorityLevelStates[plName] != nil {
 			// Still desired
@@ -188,11 +189,30 @@ func (reqMgr *requestManager) digestConfigObjects(newPLs []*rmtypesv1a1.Priority
 				newlyQuiescent = append(newlyQuiescent, plState)
 			}
 			newRMState.priorityLevelStates[plName] = plState
-			if !plState.config.Exempt {
+			if plState.config.Exempt {
+				exemptPLName = plName
+			} else {
 				shareSum += float64(plState.config.AssuredConcurrencyShares)
+			}
+			if plState.config.GlobalDefault {
+				defaultPLName = plName
 			}
 		}
 	}
+	if exemptPLName == "" {
+		exemptPLName = newRMState.imaginaryPL(0, &shareSum)
+	}
+	if defaultPLName == "" {
+		defaultPLName = newRMState.imaginaryPL(1, &shareSum)
+	}
+	fsSeq = append(fsSeq, fcboot.NewFSAllGroups("backstop to "+exemptPLName, exemptPLName, math.MaxInt32, "", user.SystemPrivilegedGroup))
+	fsSeq = append(fsSeq, fcboot.NewFSAllGroups("backstop to "+defaultPLName, defaultPLName, math.MaxInt32, rmtypesv1a1.FlowDistinguisherMethodByUserType, user.AllAuthenticated, user.AllUnauthenticated))
+	if klog.V(5) {
+		for _, fs := range fsSeq {
+			klog.Infof("Using FlowSchema %s: %#+v", fs.Name, fs.Spec)
+		}
+	}
+	newRMState.flowSchemas = fsSeq
 	for plName, plState := range newRMState.priorityLevelStates {
 		if plState.config.Exempt {
 			klog.V(5).Infof("Using exempt priority level %s: quiescent=%v", plName, plState.emptyHandler != nil)
@@ -245,6 +265,24 @@ func (reqMgr *requestManager) syncFlowSchemaStatus(fs *rmtypesv1a1.FlowSchema, i
 	if err != nil {
 		klog.Warningf("failed updating condition for flow-schema %s", fs.Name)
 	}
+}
+
+func (newRMState *requestManagerState) imaginaryPL(protoIdx int, shareSum *float64) string {
+	proto := fcboot.InitialPriorityLevelConfigurations[protoIdx]
+	base, name := proto.Name, ""
+	for i := 1; true; i++ {
+		name := strings.TrimSuffix(fmt.Sprintf("%s-%d", base, i), "-1")
+		if newRMState.priorityLevelStates[name] == nil {
+			break
+		}
+	}
+	role := []string{"Exempt", "GlobalDefault"}[protoIdx]
+	klog.Warningf("No %s PriorityLevelConfiguration found, imagining one named %q", role, name)
+	newRMState.priorityLevelStates[name] = &priorityLevelState{
+		config: proto.Spec,
+	}
+	*shareSum += float64(protoIdx) * float64(proto.Spec.AssuredConcurrencyShares)
+	return name
 }
 
 type emptyRelay struct {
