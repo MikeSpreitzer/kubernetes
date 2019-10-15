@@ -268,16 +268,21 @@ type PriorityLevelConfigurationList struct {
 }
 
 // PriorityLevelConfigurationSpec is specification of a priority level
+// +union
 type PriorityLevelConfigurationSpec struct {
-	// Being exempt means that requests of this priority level are not
-	// subject to concurrency limits (and thus are never queued) and
-	// do not detract from the concurrency available for non-exempt
-	// requests.  Defaults to `false`.
+	// `exempt` indicates whether this priority level is exempt.
+	// Valid values are "yes" and "no", and this field defaults to
+	// "no".  Being exempt means that requests of this priority level
+	// are not subject to concurrency limits (and thus are never
+	// queued) and do not detract from the concurrency available for
+	// non-exempt requests.
+	// +unionDiscriminator
 	// +optional
-	Exempt bool `json:"exempt,omitempty" protobuf:"varint,1,opt,name=exempt"`
+	Exempt string `json:"exempt,omitempty" protobuf:"varint,1,opt,name=exempt"`
 
-	// NonExempt holds the configuration parameters that are only meaningful for a non-exempt priority level.
-	// This field must be provided if `Exempt==false` and omitted if `Exempt==true`.
+	// `nonExempt` holds the configuration parameters that are only
+	// meaningful for a non-exempt priority level.  This field must be
+	// non-empty if and only if `exempt` is `"no"`.
 	// +optional
 	NonExempt NonExemptPriorityLevelConfiguration `json:"nonExempt,omitempty" protobuf:"bytes,2,opt,name=nonExempt"`
 }
@@ -296,10 +301,10 @@ type NonExemptPriorityLevelConfiguration struct {
 	AssuredConcurrencyShares int32 `json:"assuredConcurrencyShares" protobuf:"varint,1,opt,name=assuredConcurrencyShares"`
 	// `queues` is the number of queues for this priority level. The
 	// queues exist independently at each apiserver. The value must be
-	// positive and setting it to 1 disables shufflesharding and makes
-	// the distinguisher method irrelevant.  This field has a default
-	// value of 64, but see the user-facing documentation for a
-	// discussion of choosing values for this and related fields.
+	// positive.  Setting this to 1 effectively precludes
+	// shufflesharding and thus makes the distinguisher method of
+	// associated flow schemas irrelevant.  This field has a default
+	// value of 64.
 	// +optional
 	Queues int32 `json:"queues" protobuf:"varint,2,opt,name=queues"`
 	
@@ -309,9 +314,11 @@ type NonExemptPriorityLevelConfiguration struct {
 	// pair) is hashed and the hash value is used to shuffle the list
 	// of queues and deal a hand of the size specified here.  The
 	// request is put into one of the smallest queues in that hand.
-	// This field has a default value of 8, but see the user-facing
-	// documentation for a discussion of choosing values for this and
-	// related fields.
+	// `handSize` must be no larger than `queues`, and is really only
+	// helpful if it is a fraction of that (so that a few heavy flows
+	// do not saturate most of the queues).  See the user-facing
+	// documentation for more extensive guidance on setting this
+	// field.  This field has a default value of 8.
 	// +optional
 	HandSize int32 `json:"handSize" protobuf:"varint,3,opt,name=handSize"`
 	
