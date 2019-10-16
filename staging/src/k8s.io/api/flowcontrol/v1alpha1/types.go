@@ -309,6 +309,7 @@ type QueuingConfiguration struct {
 	//
 	// Required.
 	AssuredConcurrencyShares int32 `json:"assuredConcurrencyShares" protobuf:"varint,1,opt,name=assuredConcurrencyShares"`
+
 	// `queues` is the number of queues for this priority level. The
 	// queues exist independently at each apiserver. The value must be
 	// positive.  Setting it to 1 effectively precludes
