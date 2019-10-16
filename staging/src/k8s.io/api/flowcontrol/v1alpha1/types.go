@@ -285,7 +285,7 @@ type PriorityLevelConfigurationSpec struct {
 	// is not exempt).  This field must be non-empty if and only if
 	// `queuingType` is `"queuing"`.
 	// +optional
-	QueuingConfig QueuingConfiguration `json:"queuingConfig,omitempty" protobuf:"bytes,2,opt,name=queuingConfig"`
+	QueuingConfig *QueuingConfiguration `json:"queuingConfig,omitempty" protobuf:"bytes,2,opt,name=queuingConfig"`
 }
 
 // PriorityLevelQueueingType identifies the queuing nature of a priority level
