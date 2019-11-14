@@ -24,13 +24,11 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/runtime"
 
-	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apiserver/pkg/util/flowcontrol/counter"
 	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
 	"k8s.io/apiserver/pkg/util/flowcontrol/metrics"
 	"k8s.io/apiserver/pkg/util/promise/lockingpromise"
-	"k8s.io/apiserver/pkg/util/shufflesharding"
 	"k8s.io/klog"
 )
 
@@ -78,28 +76,20 @@ type queueSet struct {
 	numRequestsEnqueued int
 
 	emptyHandler fq.EmptyHandler
-	dealer       *shufflesharding.Dealer
 }
 
 // NewQueueSet creates a new QueueSet object
 // There is a new QueueSet created for each priority level.
-func (qsf queueSetFactory) NewQueueSet(config fq.QueueSetConfig) (fq.QueueSet, error) {
-	dealer, err := shufflesharding.NewDealer(config.DesiredNumQueues, config.HandSize)
-	if err != nil {
-		return nil, errors.Wrap(err, "shuffle sharding dealer creation failed")
-	}
-
-	fq := &queueSet{
-		config:               config,
-		counter:              qsf.counter,
-		queues:               createQueues(config.DesiredNumQueues, 0),
+func (qsf queueSetFactory) NewQueueSet(config fq.QueueSetConfig) fq.QueueSet {
+	return &queueSet{
 		clock:                qsf.clock,
-		virtualTime:          0,
+		counter:              qsf.counter,
 		estimatedServiceTime: 60,
+		config:               config,
+		queues:               createQueues(config.DesiredNumQueues, 0),
+		virtualTime:          0,
 		lastRealTime:         qsf.clock.Now(),
-		dealer:               dealer,
 	}
-	return fq, nil
 }
 
 // createQueues is a helper method for initializing an array of n queues
@@ -115,14 +105,9 @@ func createQueues(n, baseIndex int) []*queue {
 // update handling for when fields are updated is handled here as well -
 // eg: if DesiredNum is increased, SetConfiguration reconciles by
 // adding more queues.
-func (qs *queueSet) SetConfiguration(config fq.QueueSetConfig) error {
+func (qs *queueSet) SetConfiguration(config fq.QueueSetConfig) {
 	qs.lockAndSyncTime()
 	defer qs.lock.Unlock()
-
-	dealer, err := shufflesharding.NewDealer(config.DesiredNumQueues, config.HandSize)
-	if err != nil {
-		return errors.Wrap(err, "shuffle sharding dealer creation failed")
-	}
 
 	// Adding queues is the only thing that requires immediate action
 	// Removing queues is handled by omitting indexes >DesiredNum from
@@ -134,10 +119,9 @@ func (qs *queueSet) SetConfiguration(config fq.QueueSetConfig) error {
 	}
 
 	qs.config = config
-	qs.dealer = dealer
 
 	qs.dispatchAsMuchAsPossibleLocked()
-	return nil
+	return
 }
 
 // Quiesce controls whether the QueueSet is operating normally or is quiescing.
@@ -377,16 +361,21 @@ func (qs *queueSet) timeoutOldRequestsAndRejectOrEnqueueLocked(hashValue uint64,
 // chooseQueueIndexLocked uses shuffle sharding to select a queue index
 // using the given hashValue and the shuffle sharding parameters of the queueSet.
 func (qs *queueSet) chooseQueueIndexLocked(hashValue uint64, descr1, descr2 interface{}) int {
-	bestQueueIdx := -1
+	bestQueueIdx := 0
 	bestQueueLen := int(math.MaxInt32)
 	// the dealer uses the current desired number of queues, which is no larger than the number in `qs.queues`.
-	qs.dealer.Deal(hashValue, func(queueIdx int) {
-		thisLen := len(qs.queues[queueIdx].Requests)
-		klog.V(7).Infof("QS(%s): For request %#+v %#+v considering queue %d of length %d", qs.config.Name, descr1, descr2, queueIdx, thisLen)
-		if thisLen < bestQueueLen {
-			bestQueueIdx, bestQueueLen = queueIdx, thisLen
-		}
-	})
+	if qs.config.Dealer != nil {
+		qs.config.Dealer.Deal(hashValue, func(queueIdx int) {
+			if queueIdx < 0 || queueIdx >= len(qs.queues) {
+				return
+			}
+			thisLen := len(qs.queues[queueIdx].Requests)
+			klog.V(7).Infof("QS(%s): For request %#+v %#+v considering queue %d of length %d", qs.config.Name, descr1, descr2, queueIdx, thisLen)
+			if thisLen < bestQueueLen {
+				bestQueueIdx, bestQueueLen = queueIdx, thisLen
+			}
+		})
+	}
 	klog.V(6).Infof("QS(%s): For request %#+v %#+v chose queue %d, had %d waiting & %d executing", qs.config.Name, descr1, descr2, bestQueueIdx, bestQueueLen, qs.queues[bestQueueIdx].RequestsExecuting)
 	return bestQueueIdx
 }
