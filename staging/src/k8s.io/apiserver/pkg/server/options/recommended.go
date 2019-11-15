@@ -18,8 +18,6 @@ package options
 
 import (
 	"github.com/spf13/pflag"
-	"k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/client-go/kubernetes"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apiserver/pkg/admission"
@@ -28,6 +26,7 @@ import (
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/util/feature"
 	utilflowcontrol "k8s.io/apiserver/pkg/util/flowcontrol"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/component-base/featuregate"
 )
 
