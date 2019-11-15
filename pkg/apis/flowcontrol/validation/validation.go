@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/validation"
 	apimachineryvalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -306,7 +307,7 @@ func ValidatePriorityLevelConfiguration(pl *flowcontrol.PriorityLevelConfigurati
 // ValidatePriorityLevelConfigurationUpdate validates the update of priority-level-configuration.
 func ValidatePriorityLevelConfigurationUpdate(old, pl *flowcontrol.PriorityLevelConfiguration) field.ErrorList {
 	if (pl.Name == flowcontrol.PriorityLevelConfigurationNameExempt || pl.Name == flowcontrol.PriorityLevelConfigurationNameCatchAll) && !apiequality.Semantic.DeepEqual(old.Spec, pl.Spec) {
-		return []*field.Error{field.Invalid(field.NewPath("spec"), newPL.Spec, "spec of a fixed object may not be updated")}
+		return []*field.Error{field.Invalid(field.NewPath("spec"), pl.Spec, "spec of a fixed object may not be updated")}
 	}
 	return ValidatePriorityLevelConfiguration(pl)
 }
