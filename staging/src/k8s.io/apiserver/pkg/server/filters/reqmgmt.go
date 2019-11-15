@@ -65,7 +65,7 @@ func WithPriorityAndFairness(
 			return
 		}
 
-		execute, afterExecute := fcIfc.Wait(requestDigest)
+		execute, afterExecute := fcIfc.Wait(ctx, requestDigest)
 		if execute {
 			timedOut := ctx.Done()
 			finished := make(chan struct{})
