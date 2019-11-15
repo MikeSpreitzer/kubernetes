@@ -525,7 +525,7 @@ func buildGenericConfig(
 		lastErr = fmt.Errorf("failed to initialize admission: %v", err)
 	}
 
-	if utilfeature.DefautFeatureGate.Enabled(genericfeatures.RequestManagement) {
+	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.RequestManagement) {
 		genericConfig.FlowControl = BuildRequestManager(s, clientgoExternalClient, versionedInformers)
 	}
 
