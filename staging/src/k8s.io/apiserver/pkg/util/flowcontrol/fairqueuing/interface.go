@@ -20,7 +20,7 @@ import (
 	"context"
 	"time"
 
-		"k8s.io/apiserver/pkg/util/shufflesharding"
+	"k8s.io/apiserver/pkg/util/shufflesharding"
 )
 
 // QueueSetFactory is used to create QueueSet objects.
@@ -70,16 +70,16 @@ type QueueSet interface {
 type QueueSetConfig struct {
 	// Name is used to identify a queue set, allowing for descriptive information about its intended use
 	Name string
-	
+
 	// ConcurrencyLimit is the maximum number of requests of this QueueSet that may be executing at a time
 	ConcurrencyLimit int
-	
+
 	// DesiredNumQueues is the number of queues that the API says should exist now
 	DesiredNumQueues int
-	
+
 	// QueueLengthLimit is the maximum number of requests that may be waiting in a given queue at a time
 	QueueLengthLimit int
-	
+
 	// Dealer does the shuffle sharding.  When it is time to enqueue a
 	// request, the Dealer is called to deal a random "hand" of queue
 	// indices and the request is put in one of the dealt queues with
@@ -87,7 +87,7 @@ type QueueSetConfig struct {
 	// If the Dealer is nil or it deals no valid queue indices then a
 	// queue is chosen by a really awful method.
 	Dealer *shufflesharding.Dealer
-	
+
 	// RequestWaitLimit is the maximum amount of time that a request may wait in a queue.
 	// If, by the end of that time, the request has not been dispatched then it is rejected.
 	RequestWaitLimit time.Duration
