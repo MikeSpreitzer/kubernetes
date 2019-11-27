@@ -94,6 +94,77 @@ func TestFlowSchemaValidation(t *testing.T) {
 			expectedErrors: field.ErrorList{},
 		},
 		{
+			name: "exempt flow-schema should work",
+			flowSchema: &flowcontrol.FlowSchema{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: flowcontrol.FlowSchemaNameExempt,
+				},
+				Spec: flowcontrol.FlowSchemaSpec{
+					MatchingPrecedence: 1,
+					PriorityLevelConfiguration: flowcontrol.PriorityLevelConfigurationReference{
+						Name: "exempt",
+					},
+					Rules: []flowcontrol.PolicyRulesWithSubjects{
+						{
+							Subjects: []flowcontrol.Subject{
+								{
+									Kind:  flowcontrol.SubjectKindGroup,
+									Group: &flowcontrol.GroupSubject{Name: "system:masters"},
+								},
+							},
+							ResourceRules: []flowcontrol.ResourcePolicyRule{
+								{
+									Verbs:      []string{flowcontrol.VerbAll},
+									APIGroups:  []string{flowcontrol.APIGroupAll},
+									Resources:  []string{flowcontrol.ResourceAll},
+									Namespaces: []string{flowcontrol.NamespaceEvery},
+								},
+							},
+							NonResourceRules: []flowcontrol.NonResourcePolicyRule{
+								{
+									Verbs:           []string{flowcontrol.VerbAll},
+									NonResourceURLs: []string{"*"},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedErrors: field.ErrorList{},
+		},
+		{
+			name: "non-exempt flow-schema with matchingPrecedence==1 should fail",
+			flowSchema: &flowcontrol.FlowSchema{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "fred",
+				},
+				Spec: flowcontrol.FlowSchemaSpec{
+					MatchingPrecedence: 1,
+					PriorityLevelConfiguration: flowcontrol.PriorityLevelConfigurationReference{
+						Name: "exempt",
+					},
+					Rules: []flowcontrol.PolicyRulesWithSubjects{
+						{
+							Subjects: []flowcontrol.Subject{
+								{
+									Kind:  flowcontrol.SubjectKindGroup,
+									Group: &flowcontrol.GroupSubject{Name: "gorp"},
+								},
+							},
+							NonResourceRules: []flowcontrol.NonResourcePolicyRule{
+								{
+									Verbs:           []string{flowcontrol.VerbAll},
+									NonResourceURLs: []string{"*"},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedErrors: field.ErrorList{
+				field.Invalid(field.NewPath("spec").Child("matchingPrecedence"), int32(1), "only the schema named 'exempt' may have matchingPrecedence 1")},
+		},
+		{
 			name: "flow-schema mixes * verbs/apiGroups/resources should fail",
 			flowSchema: &flowcontrol.FlowSchema{
 				ObjectMeta: metav1.ObjectMeta{
