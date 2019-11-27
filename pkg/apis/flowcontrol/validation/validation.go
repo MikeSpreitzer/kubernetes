@@ -165,10 +165,28 @@ func ValidateFlowSchemaSubject(subject *flowcontrol.Subject, fldPath *field.Path
 	switch subject.Kind {
 	case flowcontrol.SubjectKindServiceAccount:
 		allErrs = append(allErrs, ValidateServiceAccountSubject(subject.ServiceAccount, fldPath.Child("serviceAccount"))...)
+		if subject.User != nil {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("user"), "user is forbidden when subject type is not 'User'"))
+		}
+		if subject.Group != nil {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("group"), "group is forbidden when subject type is not 'Group'"))
+		}
 	case flowcontrol.SubjectKindUser:
 		allErrs = append(allErrs, ValidateUserSubject(subject.User, fldPath.Child("user"))...)
+		if subject.ServiceAccount != nil {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("serviceAccount"), "serviceAccount is forbidden when subject type is not 'ServiceAccount'"))
+		}
+		if subject.Group != nil {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("group"), "group is forbidden when subject type is not 'Group'"))
+		}
 	case flowcontrol.SubjectKindGroup:
 		allErrs = append(allErrs, ValidateGroupSubject(subject.Group, fldPath.Child("group"))...)
+		if subject.ServiceAccount != nil {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("serviceAccount"), "serviceAccount is forbidden when subject type is not 'ServiceAccount'"))
+		}
+		if subject.User != nil {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("user"), "user is forbidden when subject type is not 'User'"))
+		}
 	default:
 		allErrs = append(allErrs, field.NotSupported(fldPath.Child("kind"), subject.Kind, supportedSubjectKinds.List()))
 	}
@@ -179,7 +197,7 @@ func ValidateFlowSchemaSubject(subject *flowcontrol.Subject, fldPath *field.Path
 func ValidateServiceAccountSubject(subject *flowcontrol.ServiceAccountSubject, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 	if subject == nil {
-		return append(allErrs, field.Required(fldPath, "serviceAccount is required when type is 'ServiceAccount'"))
+		return append(allErrs, field.Required(fldPath, "serviceAccount is required when subject type is 'ServiceAccount'"))
 	}
 	if len(subject.Name) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("name"), ""))
@@ -204,7 +222,7 @@ func ValidateServiceAccountSubject(subject *flowcontrol.ServiceAccountSubject, f
 func ValidateUserSubject(subject *flowcontrol.UserSubject, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 	if subject == nil {
-		return append(allErrs, field.Required(fldPath, "user is required when type is 'User'"))
+		return append(allErrs, field.Required(fldPath, "user is required when subject type is 'User'"))
 	}
 	if len(subject.Name) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("name"), ""))
@@ -216,7 +234,7 @@ func ValidateUserSubject(subject *flowcontrol.UserSubject, fldPath *field.Path) 
 func ValidateGroupSubject(subject *flowcontrol.GroupSubject, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 	if subject == nil {
-		return append(allErrs, field.Required(fldPath, "group is required when type is 'Group'"))
+		return append(allErrs, field.Required(fldPath, "group is required when subject type is 'Group'"))
 	}
 	if len(subject.Name) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("name"), ""))
@@ -375,7 +393,7 @@ func ValidatePriorityLevelConfigurationSpec(spec *flowcontrol.PriorityLevelConfi
 		}
 	case flowcontrol.PriorityLevelEnablementLimited:
 		if spec.Limited == nil {
-			allErrs = append(allErrs, field.Required(fldPath.Child("limited"), "must not be empty"))
+			allErrs = append(allErrs, field.Required(fldPath.Child("limited"), "must not be empty when type is Limited"))
 		} else {
 			allErrs = append(allErrs, ValidateLimitedPriorityLevelConfiguration(spec.Limited, fldPath.Child("limited"))...)
 		}
@@ -401,11 +419,11 @@ func ValidateLimitResponse(lr flowcontrol.LimitResponse, fldPath *field.Path) fi
 	switch lr.Type {
 	case flowcontrol.LimitResponseTypeReject:
 		if lr.Queuing != nil {
-			allErrs = append(allErrs, field.Forbidden(fldPath.Child("queuing"), "must be nil if the type is not Limited"))
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("queuing"), "must be nil if limited.limitResponse.type is not Limited"))
 		}
 	case flowcontrol.LimitResponseTypeQueue:
 		if lr.Queuing == nil {
-			allErrs = append(allErrs, field.Required(fldPath.Child("queuing"), "must not be empty"))
+			allErrs = append(allErrs, field.Required(fldPath.Child("queuing"), "must not be empty if limited.limitResponse.type is Limited"))
 		} else {
 			allErrs = append(allErrs, ValidatePriorityLevelQueuingConfiguration(lr.Queuing, fldPath.Child("queuing"))...)
 		}
