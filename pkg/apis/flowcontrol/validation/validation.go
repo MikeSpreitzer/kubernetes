@@ -23,9 +23,12 @@ import (
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/validation"
 	apimachineryvalidation "k8s.io/apimachinery/pkg/api/validation"
+	"k8s.io/apimachinery/pkg/conversion"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/apiserver/pkg/util/flowcontrol/bootstrap"
 	"k8s.io/apiserver/pkg/util/shufflesharding"
+	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	apivalidation "k8s.io/kubernetes/pkg/apis/core/validation"
 	"k8s.io/kubernetes/pkg/apis/flowcontrol"
 )
@@ -74,7 +77,23 @@ var supportedLimitResponseType = sets.NewString(
 // ValidateFlowSchema validates the content of flow-schema
 func ValidateFlowSchema(fs *flowcontrol.FlowSchema) field.ErrorList {
 	allErrs := apivalidation.ValidateObjectMeta(&fs.ObjectMeta, false, ValidateFlowSchemaName, field.NewPath("metadata"))
-	allErrs = append(allErrs, ValidateFlowSchemaSpec(fs.Name, &fs.Spec, field.NewPath("spec"))...)
+	specPath := field.NewPath("spec")
+	switch fs.Name {
+	case flowcontrol.FlowSchemaNameExempt, flowcontrol.FlowSchemaNameCatchAll:
+		src := bootstrap.DefaultFlowSchemaExempt
+		if fs.Name == flowcontrol.FlowSchemaNameCatchAll {
+			src = bootstrap.DefaultFlowSchemaDefault
+		}
+		var rightSpec flowcontrol.FlowSchemaSpec
+		err := legacyscheme.Scheme.Converter().Convert(&src.Spec, &rightSpec, 0, &conversion.Meta{})
+		if err != nil {
+			allErrs = append(allErrs, field.Invalid(specPath, fs.Spec, "Conversion failed: "+err.Error()))
+		} else if !apiequality.Semantic.DeepEqual(fs.Spec, rightSpec) {
+			allErrs = append(allErrs, field.Invalid(specPath, fs.Spec, fmt.Sprintf("spec of '%s' must equal the fixed value", fs.Name)))
+		}
+	default:
+		allErrs = append(allErrs, ValidateFlowSchemaSpec(fs.Name, &fs.Spec, specPath)...)
+	}
 	allErrs = append(allErrs, ValidateFlowSchemaStatus(&fs.Status, field.NewPath("status"))...)
 	return allErrs
 }
@@ -159,6 +178,9 @@ func ValidateFlowSchemaSubject(subject *flowcontrol.Subject, fldPath *field.Path
 // ValidateServiceAccountSubject validates subject of "ServiceAccount" kind
 func ValidateServiceAccountSubject(subject *flowcontrol.ServiceAccountSubject, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
+	if subject == nil {
+		return append(allErrs, field.Required(fldPath, "serviceAccount is required when type is 'ServiceAccount'"))
+	}
 	if len(subject.Name) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("name"), ""))
 	} else if subject.Name != flowcontrol.NameAll {
@@ -181,6 +203,9 @@ func ValidateServiceAccountSubject(subject *flowcontrol.ServiceAccountSubject, f
 // ValidateUserSubject validates subject of "User" kind
 func ValidateUserSubject(subject *flowcontrol.UserSubject, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
+	if subject == nil {
+		return append(allErrs, field.Required(fldPath, "user is required when type is 'User'"))
+	}
 	if len(subject.Name) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("name"), ""))
 	}
@@ -190,6 +215,9 @@ func ValidateUserSubject(subject *flowcontrol.UserSubject, fldPath *field.Path) 
 // ValidateGroupSubject validates subject of "Group" kind
 func ValidateGroupSubject(subject *flowcontrol.GroupSubject, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
+	if subject == nil {
+		return append(allErrs, field.Required(fldPath, "group is required when type is 'Group'"))
+	}
 	if len(subject.Name) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("name"), ""))
 	}
@@ -305,7 +333,23 @@ func ValidateFlowSchemaCondition(condition *flowcontrol.FlowSchemaCondition, fld
 // ValidatePriorityLevelConfiguration validates priority-level-configuration.
 func ValidatePriorityLevelConfiguration(pl *flowcontrol.PriorityLevelConfiguration) field.ErrorList {
 	allErrs := apivalidation.ValidateObjectMeta(&pl.ObjectMeta, false, ValidatePriorityLevelConfigurationName, field.NewPath("metadata"))
-	allErrs = append(allErrs, ValidatePriorityLevelConfigurationSpec(&pl.Spec, pl.Name, field.NewPath("spec"))...)
+	specPath := field.NewPath("spec")
+	switch pl.Name {
+	case flowcontrol.PriorityLevelConfigurationNameExempt, flowcontrol.PriorityLevelConfigurationNameCatchAll:
+		src := bootstrap.DefaultPriorityLevelConfigurationExempt
+		if pl.Name == flowcontrol.PriorityLevelConfigurationNameCatchAll {
+			src = bootstrap.DefaultPriorityLevelConfigurationDefault
+		}
+		var rightSpec flowcontrol.PriorityLevelConfigurationSpec
+		err := legacyscheme.Scheme.Converter().Convert(&src.Spec, &rightSpec, 0, &conversion.Meta{})
+		if err != nil {
+			allErrs = append(allErrs, field.Invalid(specPath, pl.Spec, "Conversion failed: "+err.Error()))
+		} else if !apiequality.Semantic.DeepEqual(pl.Spec, rightSpec) {
+			allErrs = append(allErrs, field.Invalid(specPath, pl.Spec, fmt.Sprintf("spec of '%s' must equal the fixed value", pl.Name)))
+		}
+	default:
+		allErrs = append(allErrs, ValidatePriorityLevelConfigurationSpec(&pl.Spec, pl.Name, specPath)...)
+	}
 	allErrs = append(allErrs, ValidatePriorityLevelConfigurationStatus(&pl.Status, field.NewPath("status"))...)
 	return allErrs
 }

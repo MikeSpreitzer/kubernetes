@@ -24,10 +24,78 @@ import (
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/kubernetes/pkg/apis/flowcontrol"
 )
 
 func TestFlowSchemaValidation(t *testing.T) {
+	badExempt := flowcontrol.FlowSchemaSpec{
+		MatchingPrecedence: 1,
+		PriorityLevelConfiguration: flowcontrol.PriorityLevelConfigurationReference{
+			Name: flowcontrol.PriorityLevelConfigurationNameExempt,
+		},
+		Rules: []flowcontrol.PolicyRulesWithSubjects{
+			{
+				Subjects: []flowcontrol.Subject{
+					{
+						Kind:  flowcontrol.SubjectKindGroup,
+						Group: &flowcontrol.GroupSubject{Name: "system:masters"},
+					},
+				},
+				ResourceRules: []flowcontrol.ResourcePolicyRule{
+					{
+						Verbs:        []string{flowcontrol.VerbAll},
+						APIGroups:    []string{flowcontrol.APIGroupAll},
+						Resources:    []string{flowcontrol.ResourceAll},
+						ClusterScope: true,
+						Namespaces:   []string{flowcontrol.NamespaceEvery},
+					},
+				},
+				NonResourceRules: []flowcontrol.NonResourcePolicyRule{
+					{
+						Verbs:           []string{flowcontrol.VerbAll},
+						NonResourceURLs: []string{"/"},
+					},
+				},
+			},
+		},
+	}
+	badCatchAll := flowcontrol.FlowSchemaSpec{
+		MatchingPrecedence: math.MaxInt32,
+		PriorityLevelConfiguration: flowcontrol.PriorityLevelConfigurationReference{
+			Name: flowcontrol.PriorityLevelConfigurationNameCatchAll,
+		},
+		DistinguisherMethod: &flowcontrol.FlowDistinguisherMethod{Type: flowcontrol.FlowDistinguisherMethodByUserType},
+		Rules: []flowcontrol.PolicyRulesWithSubjects{
+			{
+				Subjects: []flowcontrol.Subject{
+					{
+						Kind:  flowcontrol.SubjectKindGroup,
+						Group: &flowcontrol.GroupSubject{Name: user.AllUnauthenticated},
+					},
+					{
+						Kind:  flowcontrol.SubjectKindGroup,
+						Group: &flowcontrol.GroupSubject{Name: user.AllAuthenticated},
+					},
+				},
+				ResourceRules: []flowcontrol.ResourcePolicyRule{
+					{
+						Verbs:        []string{flowcontrol.VerbAll},
+						APIGroups:    []string{flowcontrol.APIGroupAll},
+						Resources:    []string{flowcontrol.ResourceAll},
+						ClusterScope: true,
+						Namespaces:   []string{flowcontrol.NamespaceEvery},
+					},
+				},
+				NonResourceRules: []flowcontrol.NonResourcePolicyRule{
+					{
+						Verbs:           []string{flowcontrol.VerbAll},
+						NonResourceURLs: []string{"/"},
+					},
+				},
+			},
+		},
+	}
 	testCases := []struct {
 		name           string
 		flowSchema     *flowcontrol.FlowSchema
@@ -102,7 +170,7 @@ func TestFlowSchemaValidation(t *testing.T) {
 				Spec: flowcontrol.FlowSchemaSpec{
 					MatchingPrecedence: 1,
 					PriorityLevelConfiguration: flowcontrol.PriorityLevelConfigurationReference{
-						Name: "exempt",
+						Name: flowcontrol.PriorityLevelConfigurationNameExempt,
 					},
 					Rules: []flowcontrol.PolicyRulesWithSubjects{
 						{
@@ -114,10 +182,76 @@ func TestFlowSchemaValidation(t *testing.T) {
 							},
 							ResourceRules: []flowcontrol.ResourcePolicyRule{
 								{
-									Verbs:      []string{flowcontrol.VerbAll},
-									APIGroups:  []string{flowcontrol.APIGroupAll},
-									Resources:  []string{flowcontrol.ResourceAll},
-									Namespaces: []string{flowcontrol.NamespaceEvery},
+									Verbs:        []string{flowcontrol.VerbAll},
+									APIGroups:    []string{flowcontrol.APIGroupAll},
+									Resources:    []string{flowcontrol.ResourceAll},
+									ClusterScope: true,
+									Namespaces:   []string{flowcontrol.NamespaceEvery},
+								},
+							},
+							NonResourceRules: []flowcontrol.NonResourcePolicyRule{
+								{
+									Verbs:           []string{flowcontrol.VerbAll},
+									NonResourceURLs: []string{"*"},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedErrors: field.ErrorList{},
+		},
+		{
+			name: "bad exempt flow-schema should fail",
+			flowSchema: &flowcontrol.FlowSchema{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: flowcontrol.FlowSchemaNameExempt,
+				},
+				Spec: badExempt,
+			},
+			expectedErrors: field.ErrorList{field.Invalid(field.NewPath("spec"), badExempt, "spec of 'exempt' must equal the fixed value")},
+		},
+		{
+			name: "bad catch-all flow-schema should fail",
+			flowSchema: &flowcontrol.FlowSchema{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: flowcontrol.FlowSchemaNameCatchAll,
+				},
+				Spec: badCatchAll,
+			},
+			expectedErrors: field.ErrorList{field.Invalid(field.NewPath("spec"), badCatchAll, "spec of 'catch-all' must equal the fixed value")},
+		},
+		{
+			name: "catch-all flow-schema should work",
+			flowSchema: &flowcontrol.FlowSchema{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: flowcontrol.FlowSchemaNameCatchAll,
+				},
+				Spec: flowcontrol.FlowSchemaSpec{
+					MatchingPrecedence: math.MaxInt32,
+					PriorityLevelConfiguration: flowcontrol.PriorityLevelConfigurationReference{
+						Name: flowcontrol.PriorityLevelConfigurationNameCatchAll,
+					},
+					DistinguisherMethod: &flowcontrol.FlowDistinguisherMethod{Type: flowcontrol.FlowDistinguisherMethodByUserType},
+					Rules: []flowcontrol.PolicyRulesWithSubjects{
+						{
+							Subjects: []flowcontrol.Subject{
+								{
+									Kind:  flowcontrol.SubjectKindGroup,
+									Group: &flowcontrol.GroupSubject{Name: user.AllUnauthenticated},
+								},
+								{
+									Kind:  flowcontrol.SubjectKindGroup,
+									Group: &flowcontrol.GroupSubject{Name: user.AllAuthenticated},
+								},
+							},
+							ResourceRules: []flowcontrol.ResourcePolicyRule{
+								{
+									Verbs:        []string{flowcontrol.VerbAll},
+									APIGroups:    []string{flowcontrol.APIGroupAll},
+									Resources:    []string{flowcontrol.ResourceAll},
+									ClusterScope: true,
+									Namespaces:   []string{flowcontrol.NamespaceEvery},
 								},
 							},
 							NonResourceRules: []flowcontrol.NonResourcePolicyRule{
@@ -665,11 +799,88 @@ func TestFlowSchemaValidation(t *testing.T) {
 }
 
 func TestPriorityLevelConfigurationValidation(t *testing.T) {
+	badSpec := flowcontrol.PriorityLevelConfigurationSpec{
+		Type: flowcontrol.PriorityLevelEnablementLimited,
+		Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
+			AssuredConcurrencyShares: 42,
+			LimitResponse: flowcontrol.LimitResponse{
+				Type: flowcontrol.LimitResponseTypeReject},
+		},
+	}
 	testCases := []struct {
 		name                       string
 		priorityLevelConfiguration *flowcontrol.PriorityLevelConfiguration
 		expectedErrors             field.ErrorList
 	}{
+		{
+			name: "exempt should work",
+			priorityLevelConfiguration: &flowcontrol.PriorityLevelConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: flowcontrol.PriorityLevelConfigurationNameExempt,
+				},
+				Spec: flowcontrol.PriorityLevelConfigurationSpec{
+					Type: flowcontrol.PriorityLevelEnablementExempt,
+				},
+			},
+			expectedErrors: field.ErrorList{},
+		},
+		{
+			name: "wrong exempt should fail",
+			priorityLevelConfiguration: &flowcontrol.PriorityLevelConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: flowcontrol.PriorityLevelConfigurationNameExempt,
+				},
+				Spec: badSpec,
+			},
+			expectedErrors: field.ErrorList{field.Invalid(field.NewPath("spec"), badSpec, "spec of 'exempt' must equal the fixed value")},
+		},
+		{
+			name: "max-in-flight should work",
+			priorityLevelConfiguration: &flowcontrol.PriorityLevelConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "max-in-flight",
+				},
+				Spec: flowcontrol.PriorityLevelConfigurationSpec{
+					Type: flowcontrol.PriorityLevelEnablementLimited,
+					Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
+						AssuredConcurrencyShares: 42,
+						LimitResponse: flowcontrol.LimitResponse{
+							Type: flowcontrol.LimitResponseTypeReject},
+					},
+				},
+			},
+			expectedErrors: field.ErrorList{},
+		},
+		{
+			name: "wrong backstop should fail",
+			priorityLevelConfiguration: &flowcontrol.PriorityLevelConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: flowcontrol.PriorityLevelConfigurationNameCatchAll,
+				},
+				Spec: badSpec,
+			},
+			expectedErrors: field.ErrorList{field.Invalid(field.NewPath("spec"), badSpec, "spec of 'catch-all' must equal the fixed value")},
+		},
+		{
+			name: "backstop should work",
+			priorityLevelConfiguration: &flowcontrol.PriorityLevelConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: flowcontrol.PriorityLevelConfigurationNameCatchAll,
+				},
+				Spec: flowcontrol.PriorityLevelConfigurationSpec{
+					Type: flowcontrol.PriorityLevelEnablementLimited,
+					Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
+						AssuredConcurrencyShares: 100,
+						LimitResponse: flowcontrol.LimitResponse{
+							Type: flowcontrol.LimitResponseTypeQueue,
+							Queuing: &flowcontrol.QueuingConfiguration{
+								Queues:           128,
+								HandSize:         6,
+								QueueLengthLimit: 100,
+							}}}},
+			},
+			expectedErrors: field.ErrorList{},
+		},
 		{
 			name: "normal customized priority level should work",
 			priorityLevelConfiguration: &flowcontrol.PriorityLevelConfiguration{
@@ -687,18 +898,6 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 								HandSize:         4,
 								QueueLengthLimit: 100,
 							}}}},
-			},
-			expectedErrors: field.ErrorList{},
-		},
-		{
-			name: "system low priority level w/ exempt should work",
-			priorityLevelConfiguration: &flowcontrol.PriorityLevelConfiguration{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: flowcontrol.PriorityLevelConfigurationNameExempt,
-				},
-				Spec: flowcontrol.PriorityLevelConfigurationSpec{
-					Type: flowcontrol.PriorityLevelEnablementExempt,
-				},
 			},
 			expectedErrors: field.ErrorList{},
 		},
