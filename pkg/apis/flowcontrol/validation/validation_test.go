@@ -214,7 +214,7 @@ func TestFlowSchemaValidation(t *testing.T) {
 								{
 									Kind:           flowcontrol.SubjectKindUser,
 									Group:          &flowcontrol.GroupSubject{Name: "fred"},
-									ServiceAccount: &flowcontrol.ServiceAccountSubject{"a", "b"},
+									ServiceAccount: &flowcontrol.ServiceAccountSubject{Namespace: "s", Name: "n"},
 								},
 							},
 							NonResourceRules: []flowcontrol.NonResourcePolicyRule{
@@ -250,7 +250,7 @@ func TestFlowSchemaValidation(t *testing.T) {
 								{
 									Kind:           flowcontrol.SubjectKindGroup,
 									User:           &flowcontrol.UserSubject{Name: "fred"},
-									ServiceAccount: &flowcontrol.ServiceAccountSubject{"a", "b"},
+									ServiceAccount: &flowcontrol.ServiceAccountSubject{Namespace: "s", Name: "n"},
 								},
 							},
 							NonResourceRules: []flowcontrol.NonResourcePolicyRule{
