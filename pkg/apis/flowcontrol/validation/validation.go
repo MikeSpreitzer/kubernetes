@@ -33,6 +33,38 @@ import (
 	"k8s.io/kubernetes/pkg/apis/flowcontrol/install"
 )
 
+var mandatoryFlowSchemas = make(map[string]*flowcontrol.FlowSchemaSpec)
+var mandatoryPriorityLevels = make(map[string]*flowcontrol.PriorityLevelConfigurationSpec)
+
+func init() {
+	converter := install.GetTheScheme().Converter()
+	specPath := field.NewPath("spec")
+	for _, fsTyped := range bootstrap.MandatoryFlowSchemas {
+		var specUntyped flowcontrol.FlowSchemaSpec
+		err := converter.Convert(&fsTyped.Spec, &specUntyped, 0, &conversion.Meta{})
+		if err != nil {
+			panic(err)
+		}
+		errs := ValidateFlowSchemaSpec(fsTyped.Name, &specUntyped, specPath)
+		if len(errs) != 0 {
+			panic(errs)
+		}
+		mandatoryFlowSchemas[fsTyped.Name] = &specUntyped
+	}
+	for _, plTyped := range bootstrap.MandatoryPriorityLevelConfigurations {
+		var specUntyped flowcontrol.PriorityLevelConfigurationSpec
+		err := converter.Convert(&plTyped.Spec, &specUntyped, 0, &conversion.Meta{})
+		if err != nil {
+			panic(err)
+		}
+		errs := ValidatePriorityLevelConfigurationSpec(&specUntyped, plTyped.Name, specPath)
+		if len(errs) != 0 {
+			panic(errs)
+		}
+		mandatoryPriorityLevels[plTyped.Name] = &specUntyped
+	}
+}
+
 // ValidateFlowSchemaName validates name for flow-schema.
 var ValidateFlowSchemaName = apimachineryvalidation.NameIsDNSSubdomain
 
@@ -77,24 +109,19 @@ var supportedLimitResponseType = sets.NewString(
 // ValidateFlowSchema validates the content of flow-schema
 func ValidateFlowSchema(fs *flowcontrol.FlowSchema) field.ErrorList {
 	allErrs := apivalidation.ValidateObjectMeta(&fs.ObjectMeta, false, ValidateFlowSchemaName, field.NewPath("metadata"))
+	allErrs = append(allErrs, ValidateFlowSchemaStatus(&fs.Status, field.NewPath("status"))...)
 	specPath := field.NewPath("spec")
-	switch fs.Name {
-	case flowcontrol.FlowSchemaNameExempt, flowcontrol.FlowSchemaNameCatchAll:
-		src := bootstrap.MandatoryFlowSchemaExempt
-		if fs.Name == flowcontrol.FlowSchemaNameCatchAll {
-			src = bootstrap.MandatoryFlowSchemaCatchAll
-		}
-		var rightSpec flowcontrol.FlowSchemaSpec
-		err := install.GetTheScheme().Converter().Convert(&src.Spec, &rightSpec, 0, &conversion.Meta{})
-		if err != nil {
-			allErrs = append(allErrs, field.Invalid(specPath, fs.Spec, "Conversion failed: "+err.Error()))
-		} else if !apiequality.Semantic.DeepEqual(fs.Spec, rightSpec) {
+	if mandSpec, ok := mandatoryFlowSchemas[fs.Name]; ok {
+		// Check for almost exact equality.  This is a pretty
+		// strict test, and it is OK in this context because both
+		// sides of this comparison are intended to ultimately
+		// come from the same code.
+		if !apiequality.Semantic.DeepEqual(fs.Spec, *mandSpec) {
 			allErrs = append(allErrs, field.Invalid(specPath, fs.Spec, fmt.Sprintf("spec of '%s' must equal the fixed value", fs.Name)))
 		}
-	default:
-		allErrs = append(allErrs, ValidateFlowSchemaSpec(fs.Name, &fs.Spec, specPath)...)
+		return allErrs
 	}
-	allErrs = append(allErrs, ValidateFlowSchemaStatus(&fs.Status, field.NewPath("status"))...)
+	allErrs = append(allErrs, ValidateFlowSchemaSpec(fs.Name, &fs.Spec, specPath)...)
 	return allErrs
 }
 
@@ -351,24 +378,19 @@ func ValidateFlowSchemaCondition(condition *flowcontrol.FlowSchemaCondition, fld
 // ValidatePriorityLevelConfiguration validates priority-level-configuration.
 func ValidatePriorityLevelConfiguration(pl *flowcontrol.PriorityLevelConfiguration) field.ErrorList {
 	allErrs := apivalidation.ValidateObjectMeta(&pl.ObjectMeta, false, ValidatePriorityLevelConfigurationName, field.NewPath("metadata"))
+	allErrs = append(allErrs, ValidatePriorityLevelConfigurationStatus(&pl.Status, field.NewPath("status"))...)
 	specPath := field.NewPath("spec")
-	switch pl.Name {
-	case flowcontrol.PriorityLevelConfigurationNameExempt, flowcontrol.PriorityLevelConfigurationNameCatchAll:
-		src := bootstrap.MandatoryPriorityLevelConfigurationExempt
-		if pl.Name == flowcontrol.PriorityLevelConfigurationNameCatchAll {
-			src = bootstrap.MandatoryPriorityLevelConfigurationCatchAll
-		}
-		var rightSpec flowcontrol.PriorityLevelConfigurationSpec
-		err := install.GetTheScheme().Converter().Convert(&src.Spec, &rightSpec, 0, &conversion.Meta{})
-		if err != nil {
-			allErrs = append(allErrs, field.Invalid(specPath, pl.Spec, "Conversion failed: "+err.Error()))
-		} else if !apiequality.Semantic.DeepEqual(pl.Spec, rightSpec) {
+	if mandSpec, ok := mandatoryPriorityLevels[pl.Name]; ok {
+		// Check for almost exact equality.  This is a pretty
+		// strict test, and it is OK in this context because both
+		// sides of this comparison are intended to ultimately
+		// come from the same code.
+		if !apiequality.Semantic.DeepEqual(pl.Spec, *mandSpec) {
 			allErrs = append(allErrs, field.Invalid(specPath, pl.Spec, fmt.Sprintf("spec of '%s' must equal the fixed value", pl.Name)))
 		}
-	default:
-		allErrs = append(allErrs, ValidatePriorityLevelConfigurationSpec(&pl.Spec, pl.Name, specPath)...)
+		return allErrs
 	}
-	allErrs = append(allErrs, ValidatePriorityLevelConfigurationStatus(&pl.Status, field.NewPath("status"))...)
+	allErrs = append(allErrs, ValidatePriorityLevelConfigurationSpec(&pl.Spec, pl.Name, specPath)...)
 	return allErrs
 }
 
