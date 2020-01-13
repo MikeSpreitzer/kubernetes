@@ -192,9 +192,9 @@ func TestFlowSchemaValidation(t *testing.T) {
 				},
 			},
 			expectedErrors: field.ErrorList{
-				field.Required(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("serviceAccount"), "serviceAccount is required when subject type is 'ServiceAccount'"),
-				field.Forbidden(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("user"), "user is forbidden when subject type is not 'User'"),
-				field.Forbidden(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("group"), "group is forbidden when subject type is not 'Group'"),
+				field.Required(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("serviceAccount"), "serviceAccount is required when subject kind is 'ServiceAccount'"),
+				field.Forbidden(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("user"), "user is forbidden when subject kind is not 'User'"),
+				field.Forbidden(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("group"), "group is forbidden when subject kind is not 'Group'"),
 			},
 		},
 		{
@@ -228,9 +228,9 @@ func TestFlowSchemaValidation(t *testing.T) {
 				},
 			},
 			expectedErrors: field.ErrorList{
-				field.Forbidden(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("serviceAccount"), "serviceAccount is forbidden when subject type is not 'ServiceAccount'"),
-				field.Required(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("user"), "user is required when subject type is 'User'"),
-				field.Forbidden(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("group"), "group is forbidden when subject type is not 'Group'"),
+				field.Forbidden(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("serviceAccount"), "serviceAccount is forbidden when subject kind is not 'ServiceAccount'"),
+				field.Required(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("user"), "user is required when subject kind is 'User'"),
+				field.Forbidden(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("group"), "group is forbidden when subject kind is not 'Group'"),
 			},
 		},
 		{
@@ -264,9 +264,9 @@ func TestFlowSchemaValidation(t *testing.T) {
 				},
 			},
 			expectedErrors: field.ErrorList{
-				field.Forbidden(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("serviceAccount"), "serviceAccount is forbidden when subject type is not 'ServiceAccount'"),
-				field.Forbidden(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("user"), "user is forbidden when subject type is not 'User'"),
-				field.Required(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("group"), "group is required when subject type is 'Group'"),
+				field.Forbidden(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("serviceAccount"), "serviceAccount is forbidden when subject kind is not 'ServiceAccount'"),
+				field.Forbidden(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("user"), "user is forbidden when subject kind is not 'User'"),
+				field.Required(field.NewPath("spec").Child("rules").Index(0).Child("subjects").Index(0).Child("group"), "group is required when subject kind is 'Group'"),
 			},
 		},
 		{
@@ -336,7 +336,7 @@ func TestFlowSchemaValidation(t *testing.T) {
 					Name: flowcontrol.FlowSchemaNameCatchAll,
 				},
 				Spec: flowcontrol.FlowSchemaSpec{
-					MatchingPrecedence: math.MaxInt32,
+					MatchingPrecedence: 10000,
 					PriorityLevelConfiguration: flowcontrol.PriorityLevelConfigurationReference{
 						Name: flowcontrol.PriorityLevelConfigurationNameCatchAll,
 					},

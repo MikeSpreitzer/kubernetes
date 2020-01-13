@@ -26,11 +26,11 @@ import (
 	"k8s.io/apimachinery/pkg/conversion"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	"k8s.io/apiserver/pkg/util/flowcontrol/bootstrap"
+	"k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap"
 	"k8s.io/apiserver/pkg/util/shufflesharding"
-	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	apivalidation "k8s.io/kubernetes/pkg/apis/core/validation"
 	"k8s.io/kubernetes/pkg/apis/flowcontrol"
+	"k8s.io/kubernetes/pkg/apis/flowcontrol/install"
 )
 
 // ValidateFlowSchemaName validates name for flow-schema.
@@ -80,12 +80,12 @@ func ValidateFlowSchema(fs *flowcontrol.FlowSchema) field.ErrorList {
 	specPath := field.NewPath("spec")
 	switch fs.Name {
 	case flowcontrol.FlowSchemaNameExempt, flowcontrol.FlowSchemaNameCatchAll:
-		src := bootstrap.DefaultFlowSchemaExempt
+		src := bootstrap.MandatoryFlowSchemaExempt
 		if fs.Name == flowcontrol.FlowSchemaNameCatchAll {
-			src = bootstrap.DefaultFlowSchemaDefault
+			src = bootstrap.MandatoryFlowSchemaCatchAll
 		}
 		var rightSpec flowcontrol.FlowSchemaSpec
-		err := legacyscheme.Scheme.Converter().Convert(&src.Spec, &rightSpec, 0, &conversion.Meta{})
+		err := install.GetTheScheme().Converter().Convert(&src.Spec, &rightSpec, 0, &conversion.Meta{})
 		if err != nil {
 			allErrs = append(allErrs, field.Invalid(specPath, fs.Spec, "Conversion failed: "+err.Error()))
 		} else if !apiequality.Semantic.DeepEqual(fs.Spec, rightSpec) {
@@ -166,26 +166,26 @@ func ValidateFlowSchemaSubject(subject *flowcontrol.Subject, fldPath *field.Path
 	case flowcontrol.SubjectKindServiceAccount:
 		allErrs = append(allErrs, ValidateServiceAccountSubject(subject.ServiceAccount, fldPath.Child("serviceAccount"))...)
 		if subject.User != nil {
-			allErrs = append(allErrs, field.Forbidden(fldPath.Child("user"), "user is forbidden when subject type is not 'User'"))
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("user"), "user is forbidden when subject kind is not 'User'"))
 		}
 		if subject.Group != nil {
-			allErrs = append(allErrs, field.Forbidden(fldPath.Child("group"), "group is forbidden when subject type is not 'Group'"))
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("group"), "group is forbidden when subject kind is not 'Group'"))
 		}
 	case flowcontrol.SubjectKindUser:
 		allErrs = append(allErrs, ValidateUserSubject(subject.User, fldPath.Child("user"))...)
 		if subject.ServiceAccount != nil {
-			allErrs = append(allErrs, field.Forbidden(fldPath.Child("serviceAccount"), "serviceAccount is forbidden when subject type is not 'ServiceAccount'"))
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("serviceAccount"), "serviceAccount is forbidden when subject kind is not 'ServiceAccount'"))
 		}
 		if subject.Group != nil {
-			allErrs = append(allErrs, field.Forbidden(fldPath.Child("group"), "group is forbidden when subject type is not 'Group'"))
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("group"), "group is forbidden when subject kind is not 'Group'"))
 		}
 	case flowcontrol.SubjectKindGroup:
 		allErrs = append(allErrs, ValidateGroupSubject(subject.Group, fldPath.Child("group"))...)
 		if subject.ServiceAccount != nil {
-			allErrs = append(allErrs, field.Forbidden(fldPath.Child("serviceAccount"), "serviceAccount is forbidden when subject type is not 'ServiceAccount'"))
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("serviceAccount"), "serviceAccount is forbidden when subject kind is not 'ServiceAccount'"))
 		}
 		if subject.User != nil {
-			allErrs = append(allErrs, field.Forbidden(fldPath.Child("user"), "user is forbidden when subject type is not 'User'"))
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("user"), "user is forbidden when subject kind is not 'User'"))
 		}
 	default:
 		allErrs = append(allErrs, field.NotSupported(fldPath.Child("kind"), subject.Kind, supportedSubjectKinds.List()))
@@ -197,7 +197,7 @@ func ValidateFlowSchemaSubject(subject *flowcontrol.Subject, fldPath *field.Path
 func ValidateServiceAccountSubject(subject *flowcontrol.ServiceAccountSubject, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 	if subject == nil {
-		return append(allErrs, field.Required(fldPath, "serviceAccount is required when subject type is 'ServiceAccount'"))
+		return append(allErrs, field.Required(fldPath, "serviceAccount is required when subject kind is 'ServiceAccount'"))
 	}
 	if len(subject.Name) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("name"), ""))
@@ -222,7 +222,7 @@ func ValidateServiceAccountSubject(subject *flowcontrol.ServiceAccountSubject, f
 func ValidateUserSubject(subject *flowcontrol.UserSubject, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 	if subject == nil {
-		return append(allErrs, field.Required(fldPath, "user is required when subject type is 'User'"))
+		return append(allErrs, field.Required(fldPath, "user is required when subject kind is 'User'"))
 	}
 	if len(subject.Name) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("name"), ""))
@@ -234,7 +234,7 @@ func ValidateUserSubject(subject *flowcontrol.UserSubject, fldPath *field.Path) 
 func ValidateGroupSubject(subject *flowcontrol.GroupSubject, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 	if subject == nil {
-		return append(allErrs, field.Required(fldPath, "group is required when subject type is 'Group'"))
+		return append(allErrs, field.Required(fldPath, "group is required when subject kind is 'Group'"))
 	}
 	if len(subject.Name) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("name"), ""))
@@ -354,12 +354,12 @@ func ValidatePriorityLevelConfiguration(pl *flowcontrol.PriorityLevelConfigurati
 	specPath := field.NewPath("spec")
 	switch pl.Name {
 	case flowcontrol.PriorityLevelConfigurationNameExempt, flowcontrol.PriorityLevelConfigurationNameCatchAll:
-		src := bootstrap.DefaultPriorityLevelConfigurationExempt
+		src := bootstrap.MandatoryPriorityLevelConfigurationExempt
 		if pl.Name == flowcontrol.PriorityLevelConfigurationNameCatchAll {
-			src = bootstrap.DefaultPriorityLevelConfigurationDefault
+			src = bootstrap.MandatoryPriorityLevelConfigurationCatchAll
 		}
 		var rightSpec flowcontrol.PriorityLevelConfigurationSpec
-		err := legacyscheme.Scheme.Converter().Convert(&src.Spec, &rightSpec, 0, &conversion.Meta{})
+		err := install.GetTheScheme().Converter().Convert(&src.Spec, &rightSpec, 0, &conversion.Meta{})
 		if err != nil {
 			allErrs = append(allErrs, field.Invalid(specPath, pl.Spec, "Conversion failed: "+err.Error()))
 		} else if !apiequality.Semantic.DeepEqual(pl.Spec, rightSpec) {
