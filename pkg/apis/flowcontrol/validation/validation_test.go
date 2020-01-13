@@ -61,7 +61,7 @@ func TestFlowSchemaValidation(t *testing.T) {
 		},
 	}
 	badCatchAll := flowcontrol.FlowSchemaSpec{
-		MatchingPrecedence: math.MaxInt32,
+		MatchingPrecedence: flowcontrol.FlowSchemaMaxMatchingPrecedence,
 		PriorityLevelConfiguration: flowcontrol.PriorityLevelConfigurationReference{
 			Name: flowcontrol.PriorityLevelConfigurationNameCatchAll,
 		},
@@ -940,7 +940,10 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 				},
 				Spec: badSpec,
 			},
-			expectedErrors: field.ErrorList{field.Invalid(field.NewPath("spec"), badSpec, "spec of 'exempt' must equal the fixed value")},
+			expectedErrors: field.ErrorList{
+				field.Invalid(field.NewPath("spec").Child("type"), flowcontrol.PriorityLevelEnablementLimited, "type must be 'Exempt' if and only if name is 'exempt'"),
+				field.Invalid(field.NewPath("spec"), badSpec, "spec of 'exempt' must equal the fixed value"),
+			},
 		},
 		{
 			name: "limited requires more details",
