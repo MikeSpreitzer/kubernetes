@@ -24,7 +24,17 @@ import (
 	"k8s.io/kubernetes/pkg/apis/flowcontrol/install"
 )
 
+// MandatoryFlowSchemas holds the untyped renditions of the mandatory
+// flow schemas.  In this map the key is the schema's name and the
+// value is the `*FlowSchema`.  Nobody should mutate anything
+// reachable from this map.
 var MandatoryFlowSchemas = internalizeFSes(bootstrap.MandatoryFlowSchemas)
+
+// MandatoryPriorityLevels holds the untyped renditions of the
+// mandatory priority level configuration objects.  In this map the
+// key is the object's name and the value is the
+// `*PriorityLevelConfiguration`.  Nobody should mutate anything
+// reachable from this map.
 var MandatoryPriorityLevels = internalizePLs(bootstrap.MandatoryPriorityLevelConfigurations)
 
 func internalizeFSes(exts []*fcv1a1.FlowSchema) map[string]*flowcontrol.FlowSchema {
