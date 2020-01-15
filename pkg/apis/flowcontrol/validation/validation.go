@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/validation"
 	apimachineryvalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -92,9 +91,6 @@ func ValidateFlowSchema(fs *flowcontrol.FlowSchema) field.ErrorList {
 
 // ValidateFlowSchemaUpdate validates the update of flow-schema
 func ValidateFlowSchemaUpdate(old, fs *flowcontrol.FlowSchema) field.ErrorList {
-	if (fs.Name == flowcontrol.FlowSchemaNameExempt || fs.Name == flowcontrol.FlowSchemaNameCatchAll) && !apiequality.Semantic.DeepEqual(old.Spec, fs.Spec) {
-		return []*field.Error{field.Invalid(field.NewPath("spec"), fs.Spec, "spec of a fixed object may not be updated")}
-	}
 	return ValidateFlowSchema(fs)
 }
 
@@ -194,7 +190,7 @@ func ValidateServiceAccountSubject(subject *flowcontrol.ServiceAccountSubject, f
 	if len(subject.Name) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("name"), ""))
 	} else if subject.Name != flowcontrol.NameAll {
-		for _, msg := range validation.ValidateServiceAccountName(subject.Name, false) {
+		for _, msg := range apimachineryvalidation.ValidateServiceAccountName(subject.Name, false) {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("name"), subject.Name, msg))
 		}
 	}
@@ -360,9 +356,6 @@ func ValidatePriorityLevelConfiguration(pl *flowcontrol.PriorityLevelConfigurati
 
 // ValidatePriorityLevelConfigurationUpdate validates the update of priority-level-configuration.
 func ValidatePriorityLevelConfigurationUpdate(old, pl *flowcontrol.PriorityLevelConfiguration) field.ErrorList {
-	if (pl.Name == flowcontrol.PriorityLevelConfigurationNameExempt || pl.Name == flowcontrol.PriorityLevelConfigurationNameCatchAll) && !apiequality.Semantic.DeepEqual(old.Spec, pl.Spec) {
-		return []*field.Error{field.Invalid(field.NewPath("spec"), pl.Spec, "spec of a fixed object may not be updated")}
-	}
 	return ValidatePriorityLevelConfiguration(pl)
 }
 
