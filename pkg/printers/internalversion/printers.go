@@ -528,6 +528,7 @@ func AddHandlers(h printers.PrintHandler) {
 		{Name: "MatchingPrecedence", Type: "string", Description: flowcontrolv1alpha1.FlowSchemaSpec{}.SwaggerDoc()["matchingPrecedence"]},
 		{Name: "DistinguisherMethod", Type: "string", Description: flowcontrolv1alpha1.FlowSchemaSpec{}.SwaggerDoc()["distinguisherMethod"]},
 		{Name: "MatchesAll", Type: "bolean", Description: "matches all requests"},
+		{Name: "MissingPL", Type: "string", Description: "references a broken or non-existent PriorityLevelConfiguration"},
 		{Name: "Age", Type: "string", Description: metav1.ObjectMeta{}.SwaggerDoc()["creationTimestamp"]},
 	}
 	h.TableHandler(flowSchemaColumnDefinitions, printFlowSchema)
@@ -2328,7 +2329,14 @@ func printFlowSchema(obj *flowcontrol.FlowSchema, options printers.GenerateOptio
 	if obj.Spec.DistinguisherMethod != nil {
 		distinguisherMethod = string(obj.Spec.DistinguisherMethod.Type)
 	}
-	row.Cells = append(row.Cells, name, plName, obj.Spec.MatchingPrecedence, distinguisherMethod, fsMatchesAll(obj), translateTimestampSince(obj.CreationTimestamp))
+	badPLRef := "?"
+	for _, cond := range obj.Status.Conditions {
+		if cond.Type == flowcontrol.FlowSchemaConditionDangling {
+			badPLRef = string(cond.Status)
+			break
+		}
+	}
+	row.Cells = append(row.Cells, name, plName, obj.Spec.MatchingPrecedence, distinguisherMethod, fsMatchesAll(obj), badPLRef, translateTimestampSince(obj.CreationTimestamp))
 
 	return []metav1.TableRow{row}, nil
 }
