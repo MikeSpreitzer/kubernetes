@@ -4932,7 +4932,7 @@ func TestPrintFlowSchema(t *testing.T) {
 					Conditions: []flowcontrol.FlowSchemaCondition{{
 						Type:               flowcontrol.FlowSchemaConditionDangling,
 						Status:             "True",
-						LastTransitionTime: metav1.Time{time.Now().Add(-time.Hour)},
+						LastTransitionTime: metav1.Time{Time: time.Now().Add(-time.Hour)},
 					}},
 				},
 			},
