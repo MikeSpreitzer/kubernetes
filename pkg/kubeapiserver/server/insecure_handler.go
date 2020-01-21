@@ -29,7 +29,7 @@ import (
 // BuildInsecureHandlerChain sets up the server to listen to http. Should be removed.
 func BuildInsecureHandlerChain(apiHandler http.Handler, c *server.Config) http.Handler {
 	handler := apiHandler
-	if feature.DefaultFeatureGate.Enabled(features.APIPriorityAndFairness) {
+	if feature.DefaultFeatureGate.Enabled(features.APIPriorityAndFairness) && false {
 		handler = genericfilters.WithPriorityAndFairness(handler, c.LongRunningFunc, c.FlowControl)
 	} else {
 		handler = genericfilters.WithMaxInFlightLimit(handler, c.MaxRequestsInFlight, c.MaxMutatingRequestsInFlight, c.LongRunningFunc)
