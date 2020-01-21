@@ -96,47 +96,37 @@ func (impl *implementation) Run(stopCh <-chan struct{}) error {
 
 func (impl *implementation) Wait(ctx context.Context, requestDigest fcfc.RequestDigest) (bool, func()) {
 	startWaitingTime := time.Now()
-	for { // loop until QueueSet::Wait does not return tryAnother==true
-		cfgState := impl.ctl.GetCurrentState()
 
-		// 1. classify the request
-		fsName, distinguisherMethod, plName, plEnablement, queues := cfgState.Match(requestDigest)
+	// 1. classify the request
+	fsName, distinguisherMethod, plName, startFn := impl.ctl.Match(requestDigest)
 
-		// 2. early out for exempt
-		if plEnablement == fctypesv1a1.PriorityLevelEnablementExempt {
-			klog.V(7).Infof("Serving requestInfo=%#+v, userInfo=%#+v, fs=%s, pl=%s without delay", requestDigest.RequestInfo, requestDigest.User, fsName, plName)
-			startExecutionTime := time.Now()
-			return true, func() {
-				metrics.ObserveExecutionDuration(plName, fsName, time.Now().Sub(startExecutionTime))
-			}
-		}
-
-		// 3. computing hash
-		flowDistinguisher := computeFlowDistinguisher(requestDigest, distinguisherMethod)
-		hashValue := hashFlowID(fsName, flowDistinguisher)
-
-		// 4. queuing
-		tryAnother, execute, afterExecute := queues.Wait(ctx, hashValue, requestDigest.RequestInfo, requestDigest.User)
-		if tryAnother {
-			klog.V(5).Infof("Request requestInfo=%#+v, userInfo=%#+v, fs=%s, pl=%s landed in timing splinter, re-classifying", requestDigest.RequestInfo, requestDigest.User, fsName, plName)
-			// Controller promises us that a following
-			// GetCurrentState() will produce something more evolved
-			// than last time
-			continue
-		}
-
-		// 5. execute or reject
-		metrics.ObserveWaitingDuration(plName, fsName, strconv.FormatBool(execute), time.Now().Sub(startWaitingTime))
-		if !execute {
-			klog.V(7).Infof("Rejecting requestInfo=%#+v, userInfo=%#+v, fs=%s, pl=%s after fair queuing", requestDigest.RequestInfo, requestDigest.User, fsName, plName)
-			return false, func() {}
-		}
-		klog.V(7).Infof("Serving requestInfo=%#+v, userInfo=%#+v, fs=%s, pl=%s after fair queuing", requestDigest.RequestInfo, requestDigest.User, fsName, plName)
+	// 2. early out for exempt
+	if startFn == nil {
+		klog.V(7).Infof("Serving requestInfo=%#+v, userInfo=%#+v, fs=%s, pl=%s without delay", requestDigest.RequestInfo, requestDigest.User, fsName, plName)
 		startExecutionTime := time.Now()
-		return execute, func() {
+		return true, func() {
 			metrics.ObserveExecutionDuration(plName, fsName, time.Now().Sub(startExecutionTime))
-			afterExecute()
 		}
+	}
+
+	// 3. computing hash
+	flowDistinguisher := computeFlowDistinguisher(requestDigest, distinguisherMethod)
+	hashValue := hashFlowID(fsName, flowDistinguisher)
+
+	// 4. queuing
+	execute, afterExecute := startFn(ctx, hashValue, requestDigest.RequestInfo, requestDigest.User)
+
+	// 5. execute or reject
+	metrics.ObserveWaitingDuration(plName, fsName, strconv.FormatBool(execute), time.Now().Sub(startWaitingTime))
+	if !execute {
+		klog.V(7).Infof("Rejecting requestInfo=%#+v, userInfo=%#+v, fs=%s, pl=%s after fair queuing", requestDigest.RequestInfo, requestDigest.User, fsName, plName)
+		return false, func() {}
+	}
+	klog.V(7).Infof("Serving requestInfo=%#+v, userInfo=%#+v, fs=%s, pl=%s after fair queuing", requestDigest.RequestInfo, requestDigest.User, fsName, plName)
+	startExecutionTime := time.Now()
+	return execute, func() {
+		metrics.ObserveExecutionDuration(plName, fsName, time.Now().Sub(startExecutionTime))
+		afterExecute()
 	}
 }
 
