@@ -68,16 +68,22 @@ func exerciseQueueSetUniformScenario(t *testing.T, name string, qs fq.QueueSet, 
 					ClockWait(clk, counter, uc.thinkDuration)
 					for {
 						req, idle := qs.StartRequest(context.Background(), uc.hash, name, []int{i, j, k})
-						t.Logf("%s: %d, %d, %d got req=%v, idle=%v", clk.Now().Format(nsTimeFmt), i, j, k, req, idle)
+						t.Logf("%s: %d, %d, %d got req=%p, idle=%v", clk.Now().Format(nsTimeFmt), i, j, k, req, idle)
 						if req == nil {
 							atomic.AddUint64(&failedCount, 1)
 							break
+						}
+						if idle {
+							t.Error("got request but QueueSet reported idle")
 						}
 						execute, idle, afterExecute := req.Wait()
 						t.Logf("%s: %d, %d, %d got exec=%v, idle=%v", clk.Now().Format(nsTimeFmt), i, j, k, execute, idle)
 						if !execute {
 							atomic.AddUint64(&failedCount, 1)
 							break
+						}
+						if idle {
+							t.Error("got execute==true but QueueSet reported idle")
 						}
 						igr.Add(1)
 						ClockWait(clk, counter, uc.execDuration)
