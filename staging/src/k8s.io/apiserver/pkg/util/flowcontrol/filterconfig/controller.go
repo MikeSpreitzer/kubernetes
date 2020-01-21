@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/clock"
+	apierrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	fcboot "k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap"
 	"k8s.io/apiserver/pkg/authentication/user"
@@ -298,8 +299,12 @@ func (cfgCtl *configController) syncOne() bool {
 		klog.Errorf("Unable to list FlowSchema objects: %s", err.Error())
 		return false
 	}
-	cfgCtl.digestConfigObjects(newPLs, newFSs)
-	return true
+	err = cfgCtl.digestConfigObjects(newPLs, newFSs)
+	if err == nil {
+		return true
+	}
+	klog.Error(err)
+	return false
 }
 
 // cfgMeal is the data involved in the process of digesting the API
@@ -321,11 +326,40 @@ type cfgMeal struct {
 
 	// These keep track of which mandatory objects have been digested
 	haveExemptPL, haveCatchAllPL, haveExemptFS, haveCatchAllFS bool
+
+	// buffered FlowSchema status updates to do.
+	// Do them when the lock is not held, of course.
+	fsStatusUpdates []fsStatusUpdate
+}
+
+// A buffered set of status updates for a FlowSchema
+type fsStatusUpdate struct {
+	flowSchema *fctypesv1a1.FlowSchema
+	condition  fctypesv1a1.FlowSchemaCondition
+	oldStatus  fctypesv1a1.ConditionStatus
 }
 
 // digestConfigObjects is given all the API objects that configure
 // cfgCtl and writes its consequent new configState.
-func (cfgCtl *configController) digestConfigObjects(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) {
+func (cfgCtl *configController) digestConfigObjects(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) error {
+	fsStatusUpdates := cfgCtl.lockAndDigestConfigObjects(newPLs, newFSs)
+	var errs []error
+	for _, fsu := range fsStatusUpdates {
+		fs2 := fsu.flowSchema.DeepCopy()
+		klog.V(4).Infof("Writing %#+v to FlowSchema %s because its previous Status was %q", fsu.condition, fs2.Name, fsu.oldStatus)
+		apihelpers.SetFlowSchemaCondition(fs2, fsu.condition)
+		_, err := cfgCtl.flowcontrolClient.FlowSchemas().UpdateStatus(fs2)
+		if err != nil {
+			errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to set a status.condition for FlowSchema %s", fs2.Name)))
+		}
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return apierrors.NewAggregate(errs)
+}
+
+func (cfgCtl *configController) lockAndDigestConfigObjects(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) []fsStatusUpdate {
 	cfgCtl.lock.Lock()
 	defer cfgCtl.lock.Unlock()
 	meal := cfgMeal{
@@ -333,9 +367,9 @@ func (cfgCtl *configController) digestConfigObjects(newPLs []*fctypesv1a1.Priori
 		newPLStates: make(map[string]*priorityLevelState),
 	}
 
-	meal.digestNewPLs(newPLs)
-	meal.digestFlowSchemas(newFSs)
-	meal.processOldPLs()
+	meal.digestNewPLsLocked(newPLs)
+	meal.digestFlowSchemasLocked(newFSs)
+	meal.processOldPLsLocked()
 
 	// Supply missing mandatory PriorityLevelConfiguration objects
 	if !meal.haveExemptPL {
@@ -345,16 +379,17 @@ func (cfgCtl *configController) digestConfigObjects(newPLs []*fctypesv1a1.Priori
 		meal.imaginePL(fcboot.MandatoryPriorityLevelConfigurationCatchAll, cfgCtl.requestWaitLimit)
 	}
 
-	meal.finishQueueSetReconfigs()
+	meal.finishQueueSetReconfigsLocked()
 
 	// The new config has been constructed
 	cfgCtl.priorityLevelStates = meal.newPLStates
 	klog.V(5).Infof("Switched to new API Priority and Fairness configuration")
+	return meal.fsStatusUpdates
 }
 
 // Digest the new set of PriorityLevelConfiguration objects.
 // Pretend broken ones do not exist.
-func (meal *cfgMeal) digestNewPLs(newPLs []*fctypesv1a1.PriorityLevelConfiguration) {
+func (meal *cfgMeal) digestNewPLsLocked(newPLs []*fctypesv1a1.PriorityLevelConfiguration) {
 	for _, pl := range newPLs {
 		state := meal.cfgCtl.priorityLevelStates[pl.Name]
 		if state == nil {
@@ -389,7 +424,7 @@ func (meal *cfgMeal) digestNewPLs(newPLs []*fctypesv1a1.PriorityLevelConfigurati
 // requests stop going to those levels and FlowSchemaStatus values
 // reflect this.  This function also adds any missing mandatory
 // FlowSchema objects.
-func (meal *cfgMeal) digestFlowSchemas(newFSs []*fctypesv1a1.FlowSchema) {
+func (meal *cfgMeal) digestFlowSchemasLocked(newFSs []*fctypesv1a1.FlowSchema) {
 	fsSeq := make(apihelpers.FlowSchemaSequence, 0, len(newFSs))
 	for i, fs := range newFSs {
 		_, goodPriorityRef := meal.newPLStates[fs.Spec.PriorityLevelConfiguration.Name]
@@ -397,13 +432,9 @@ func (meal *cfgMeal) digestFlowSchemas(newFSs []*fctypesv1a1.FlowSchema) {
 		// Ensure the object's status reflects whether its priority
 		// level reference is broken.
 		//
-		// TODO: consider
-		// k8s.io/apimachinery/pkg/util/errors.NewAggregate
-		// errors from all of these and return it at the end.
-		//
 		// TODO: consider not even trying if server is not handling
 		// requests yet.
-		meal.cfgCtl.syncFlowSchemaStatus(fs, !goodPriorityRef)
+		meal.presyncFlowSchemaStatus(fs, !goodPriorityRef)
 
 		if !goodPriorityRef {
 			continue
@@ -436,7 +467,7 @@ func (meal *cfgMeal) digestFlowSchemas(newFSs []*fctypesv1a1.FlowSchema) {
 // behavior, or are still busy; for the rest: drop it if it has no
 // queues, otherwise start the quiescing process if that has not
 // already been started.
-func (meal *cfgMeal) processOldPLs() {
+func (meal *cfgMeal) processOldPLsLocked() {
 	for plName, plState := range meal.cfgCtl.priorityLevelStates {
 		if meal.newPLStates[plName] != nil {
 			// Still desired and already updated
@@ -475,7 +506,7 @@ func (meal *cfgMeal) processOldPLs() {
 // For all the priority levels of the new config, divide up the
 // server's total concurrency limit among them and create/update their
 // QueueSets.
-func (meal *cfgMeal) finishQueueSetReconfigs() {
+func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 	for plName, plState := range meal.newPLStates {
 		if plState.config.Limited == nil {
 			klog.V(5).Infof("Using exempt priority level %q: quiescing=%v", plName, plState.quiescing)
@@ -530,32 +561,28 @@ func qscOfPL(qsf fq.QueueSetFactory, queues fq.QueueSet, plName string, plSpec *
 	return qsc, err
 }
 
-func (cfgCtl *configController) syncFlowSchemaStatus(fs *fctypesv1a1.FlowSchema, isDangling bool) {
+func (meal *cfgMeal) presyncFlowSchemaStatus(fs *fctypesv1a1.FlowSchema, isDangling bool) {
 	danglingCondition := apihelpers.GetFlowSchemaConditionByType(fs, fctypesv1a1.FlowSchemaConditionDangling)
 	if danglingCondition == nil {
 		danglingCondition = &fctypesv1a1.FlowSchemaCondition{
 			Type: fctypesv1a1.FlowSchemaConditionDangling,
 		}
 	}
-	oldStatus := danglingCondition.Status
-	switch {
-	case isDangling && danglingCondition.Status != fctypesv1a1.ConditionTrue:
-		danglingCondition.Status = fctypesv1a1.ConditionTrue
-		danglingCondition.LastTransitionTime = metav1.Now()
-	case !isDangling && danglingCondition.Status != fctypesv1a1.ConditionFalse:
-		danglingCondition.Status = fctypesv1a1.ConditionFalse
-		danglingCondition.LastTransitionTime = metav1.Now()
-	default:
-		// the dangling status is already in sync, skip updating
+	desiredStatus := fctypesv1a1.ConditionFalse
+	if isDangling {
+		desiredStatus = fctypesv1a1.ConditionTrue
+	}
+	if danglingCondition.Status == desiredStatus {
 		return
 	}
-	klog.V(4).Infof("Updating the %q Condition of FlowSchema %s to %#+v because the previous ConditionStatus was %q", fctypesv1a1.FlowSchemaConditionDangling, fs.Name, *danglingCondition, oldStatus)
-	apihelpers.SetFlowSchemaCondition(fs, *danglingCondition)
-
-	_, err := cfgCtl.flowcontrolClient.FlowSchemas().UpdateStatus(fs)
-	if err != nil {
-		klog.Warningf("failed updating condition for flow-schema %s", fs.Name)
-	}
+	meal.fsStatusUpdates = append(meal.fsStatusUpdates, fsStatusUpdate{
+		flowSchema: fs,
+		condition: fctypesv1a1.FlowSchemaCondition{
+			Type:               fctypesv1a1.FlowSchemaConditionDangling,
+			Status:             desiredStatus,
+			LastTransitionTime: metav1.Now(),
+		},
+		oldStatus: danglingCondition.Status})
 }
 
 // imaginePL adds a priority level based on one of the mandatory ones
