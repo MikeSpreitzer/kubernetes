@@ -183,11 +183,11 @@ func upgrade(flowcontrolClientSet flowcontrolclient.FlowcontrolV1alpha1Interface
 		if err == nil {
 			// TODO(yue9944882): extract existing version from label and compare
 			// TODO(yue9944882): create w/ version string attached
-			identical, err := flowSchemaHasWrongSpec(expectedFlowSchema, actualFlowSchema)
+			wrongSpec, err := flowSchemaHasWrongSpec(expectedFlowSchema, actualFlowSchema)
 			if err != nil {
 				return fmt.Errorf("failed checking if mandatory FlowSchema %s is up-to-date due to %v, will retry later", expectedFlowSchema.Name, err)
 			}
-			if !identical {
+			if wrongSpec {
 				if _, err := flowcontrolClientSet.FlowSchemas().Update(expectedFlowSchema); err != nil {
 					return fmt.Errorf("failed upgrading mandatory FlowSchema %s due to %v, will retry later", expectedFlowSchema.Name, err)
 				} else {
@@ -214,11 +214,11 @@ func upgrade(flowcontrolClientSet flowcontrolclient.FlowcontrolV1alpha1Interface
 		if err == nil {
 			// TODO(yue9944882): extract existing version from label and compare
 			// TODO(yue9944882): create w/ version string attached
-			identical, err := priorityLevelHasWrongSpec(expectedPriorityLevelConfiguration, actualPriorityLevelConfiguration)
+			wrongSpec, err := priorityLevelHasWrongSpec(expectedPriorityLevelConfiguration, actualPriorityLevelConfiguration)
 			if err != nil {
 				return fmt.Errorf("failed checking if mandatory PriorityLevelConfiguration %s is up-to-date due to %v, will retry later", expectedPriorityLevelConfiguration.Name, err)
 			}
-			if !identical {
+			if wrongSpec {
 				if _, err := flowcontrolClientSet.PriorityLevelConfigurations().Update(expectedPriorityLevelConfiguration); err != nil {
 					return fmt.Errorf("failed upgrading mandatory PriorityLevelConfiguration %s due to %v, will retry later", expectedPriorityLevelConfiguration.Name, err)
 				} else {
