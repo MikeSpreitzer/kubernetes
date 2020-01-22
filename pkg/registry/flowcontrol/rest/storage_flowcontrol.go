@@ -34,7 +34,6 @@ import (
 	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/apis/flowcontrol"
-	flowcontrolapisv1alpha1 "k8s.io/kubernetes/pkg/apis/flowcontrol/v1alpha1"
 	flowschemastore "k8s.io/kubernetes/pkg/registry/flowcontrol/flowschema/storage"
 	prioritylevelconfigurationstore "k8s.io/kubernetes/pkg/registry/flowcontrol/prioritylevelconfiguration/storage"
 )
@@ -177,6 +176,8 @@ func ensure(flowcontrolClientSet flowcontrolclient.FlowcontrolV1alpha1Interface,
 	return nil
 }
 
+// Ensures the given mandatory objects exist and have the right spec.
+// The given spec does not change when defaulting is applied.
 func upgrade(flowcontrolClientSet flowcontrolclient.FlowcontrolV1alpha1Interface, flowSchemas []*flowcontrolv1alpha1.FlowSchema, priorityLevels []*flowcontrolv1alpha1.PriorityLevelConfiguration) error {
 	for _, expectedFlowSchema := range flowSchemas {
 		actualFlowSchema, err := flowcontrolClientSet.FlowSchemas().Get(expectedFlowSchema.Name, metav1.GetOptions{})
@@ -244,13 +245,9 @@ func upgrade(flowcontrolClientSet flowcontrolclient.FlowcontrolV1alpha1Interface
 }
 
 func flowSchemaHasWrongSpec(expected, actual *flowcontrolv1alpha1.FlowSchema) (bool, error) {
-	copiedExpectedFlowSchema := expected.DeepCopy()
-	flowcontrolapisv1alpha1.SetObjectDefaults_FlowSchema(copiedExpectedFlowSchema)
-	return !equality.Semantic.DeepEqual(copiedExpectedFlowSchema.Spec, actual.Spec), nil
+	return !equality.Semantic.DeepEqual(expected.Spec, actual.Spec), nil
 }
 
 func priorityLevelHasWrongSpec(expected, actual *flowcontrolv1alpha1.PriorityLevelConfiguration) (bool, error) {
-	copiedExpectedPriorityLevel := expected.DeepCopy()
-	flowcontrolapisv1alpha1.SetObjectDefaults_PriorityLevelConfiguration(copiedExpectedPriorityLevel)
-	return !equality.Semantic.DeepEqual(copiedExpectedPriorityLevel.Spec, actual.Spec), nil
+	return !equality.Semantic.DeepEqual(expected.Spec, actual.Spec), nil
 }
