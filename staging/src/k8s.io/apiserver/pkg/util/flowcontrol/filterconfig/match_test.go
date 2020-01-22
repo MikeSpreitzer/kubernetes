@@ -26,49 +26,52 @@ import (
 
 func TestMatching(t *testing.T) {
 	rng := rand.New(rand.NewSource(42))
-	goodPLNames := sets.NewString("a", "b")
-	badPLNames := sets.NewString("c", "d")
-	for i := 0; i < 10000; i++ {
-		t.Logf("Trial %d", i)
-		fs, valid, _, _, matchingDigests, skippingDigests := genFS(t, rng, fmt.Sprintf("fs%d", i), goodPLNames, badPLNames)
-		if !valid {
-			t.Logf("Not testing invalid %s", FmtFlowSchema(fs))
-			continue
-		}
-		for _, digest := range matchingDigests {
-			a := matchesFlowSchema(digest, fs)
-			if !a {
-				t.Errorf("Expected %s to match %#+v but it did not", FmtFlowSchema(fs), digest)
+	goodPLNames := sets.NewString(genWords(rng, true, 5, "")...)
+	badPLNames := sets.NewString(genWords(rng, false, 5, "")...)
+	for i := 0; i < 1000; i++ {
+		t.Run(fmt.Sprintf("trial%d:", i), func(t *testing.T) {
+			fs, valid, _, _, matchingDigests, skippingDigests := genFS(t, rng, fmt.Sprintf("fs%d", i), goodPLNames, badPLNames)
+			if !valid {
+				t.Logf("Not testing invalid %s", FmtFlowSchema(fs))
+				return
 			}
-		}
-		for _, digest := range skippingDigests {
-			a := matchesFlowSchema(digest, fs)
-			if a {
-				t.Errorf("Expected %s to not match %#+v but it did", FmtFlowSchema(fs), digest)
+			for _, digest := range matchingDigests {
+				a := matchesFlowSchema(digest, fs)
+				if !a {
+					t.Errorf("Expected %s to match %#+v but it did not", FmtFlowSchema(fs), digest)
+				}
 			}
-		}
+			for _, digest := range skippingDigests {
+				a := matchesFlowSchema(digest, fs)
+				if a {
+					t.Errorf("Expected %s to not match %#+v but it did", FmtFlowSchema(fs), digest)
+				}
+			}
+		})
 	}
 }
 
 func TestPolicyRules(t *testing.T) {
 	rng := rand.New(rand.NewSource(42))
-	for i := 0; i < 1000; i++ {
-		r := rng.Float32()
-		n := rng.Float32()
-		policyRule, valid, matchingDigests, skippingDigests := genPolicyRuleWithSubjects(t, rng, r < 0.15, n < 0.15, r < 0.05, n < 0.05)
-		t.Logf("policyRule=%s, valid=%v, md=%#+v, sd=%#+v", FmtPolicyRule(policyRule), valid, matchingDigests, skippingDigests)
-		if !valid {
-			continue
-		}
-		for _, digest := range matchingDigests {
-			if !matchesPolicyRule(digest, &policyRule) {
-				t.Logf("Expected %s to match %#+v but it did not", FmtPolicyRule(policyRule), digest)
+	for i := 0; i < 100; i++ {
+		t.Run(fmt.Sprintf("trial%d:", i), func(t *testing.T) {
+			r := rng.Float32()
+			n := rng.Float32()
+			policyRule, valid, matchingDigests, skippingDigests := genPolicyRuleWithSubjects(t, rng, r < 0.15, n < 0.15, r < 0.05, n < 0.05)
+			t.Logf("policyRule=%s, valid=%v, md=%#+v, sd=%#+v", FmtPolicyRule(policyRule), valid, matchingDigests, skippingDigests)
+			if !valid {
+				return
 			}
-		}
-		for _, digest := range skippingDigests {
-			if matchesPolicyRule(digest, &policyRule) {
-				t.Logf("Expected %s to not match %#+v but it did", FmtPolicyRule(policyRule), digest)
+			for _, digest := range matchingDigests {
+				if !matchesPolicyRule(digest, &policyRule) {
+					t.Logf("Expected %s to match %#+v but it did not", FmtPolicyRule(policyRule), digest)
+				}
 			}
-		}
+			for _, digest := range skippingDigests {
+				if matchesPolicyRule(digest, &policyRule) {
+					t.Logf("Expected %s to not match %#+v but it did", FmtPolicyRule(policyRule), digest)
+				}
+			}
+		})
 	}
 }

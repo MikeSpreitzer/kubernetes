@@ -53,15 +53,9 @@ func genFS(t *testing.T, rng *rand.Rand, name string, goodPLNames, badPLNames se
 	if rng.Float32() < 0.8 {
 		fdmt := fcv1a1.FlowDistinguisherMethodType(
 			pickString(rng,
-				string(fcv1a1.FlowDistinguisherMethodByUserType),
-				string(fcv1a1.FlowDistinguisherMethodByUserType),
-				string(fcv1a1.FlowDistinguisherMethodByUserType),
-				string(fcv1a1.FlowDistinguisherMethodByUserType),
-				string(fcv1a1.FlowDistinguisherMethodByNamespaceType),
-				string(fcv1a1.FlowDistinguisherMethodByNamespaceType),
-				string(fcv1a1.FlowDistinguisherMethodByNamespaceType),
-				string(fcv1a1.FlowDistinguisherMethodByNamespaceType),
-				"fubar"))
+				stringp{s: string(fcv1a1.FlowDistinguisherMethodByUserType), p: 1},
+				stringp{s: string(fcv1a1.FlowDistinguisherMethodByNamespaceType), p: 1},
+				stringp{s: "fubar", p: 0.1}))
 		valid = valid && string(fdmt) != "fubar"
 		fs.Spec.DistinguisherMethod = &fcv1a1.FlowDistinguisherMethod{fdmt}
 	}
@@ -132,10 +126,10 @@ func genPolicyRuleWithSubjects(t *testing.T, rng *rand.Rand, someMatchesAllResou
 	matchingReqs := []*request.RequestInfo{}
 	skippingReqs := []*request.RequestInfo{}
 	if !someMatchesAllResourceRequests {
-		skippingReqs = append(skippingReqs, &request.RequestInfo{IsResourceRequest: true, Path: "/api/v1/namespaces/example-com/pets", Verb: "mash", APIPrefix: "api", APIVersion: "v1", Namespace: "fredz", Resource: "pets", Parts: []string{"pets"}})
+		skippingReqs = append(skippingReqs, genSkippingRsc(rng))
 	}
 	if !someMatchesAllNonResourceRequests {
-		skippingReqs = append(skippingReqs, &request.RequestInfo{IsResourceRequest: false, Path: "/bog/us", Verb: "mash", Parts: nil})
+		skippingReqs = append(skippingReqs, genSkippingNonRsc(rng))
 	}
 	valid := true
 	nSubj := rng.Intn(4)
@@ -346,13 +340,11 @@ func genResourceRule(rng *rand.Rand, matchAllResources, someMatchesAllResources,
 		nns = 1 + rng.Intn(3)
 	}
 	rr := fcv1a1.ResourcePolicyRule{
-		Verbs:        ([]string{"create", "get", "list"})[:1+rng.Intn(3)],
-		APIGroups:    ([]string{"", "apps", "storage.k8s.io", "etcd.database.coreos.com"})[:1+rng.Intn(4)],
-		Resources:    ([]string{"apples", "bananas", "cats"})[:1+rng.Intn(3)],
+		Verbs:        genWords(rng, true, 1+rng.Intn(3), "verb"),
+		APIGroups:    genWords(rng, true, 1+rng.Intn(3), ""),
+		Resources:    genWords(rng, true, 1+rng.Intn(3), "plural"),
 		ClusterScope: matchAllResources || rng.Intn(2) == 0,
-		Namespaces: ([]string{fmt.Sprintf("ns%d", rng.Uint64()),
-			fmt.Sprintf("ns%d", rng.Uint64()),
-			fmt.Sprintf("ns%d", rng.Uint64())})[:nns],
+		Namespaces:   genNums(rng, "ns", 4)[:nns],
 	}
 	// choose a proper subset of fields to wildcard; only matters if not matching all
 	starMask := rng.Intn(15)
@@ -377,70 +369,86 @@ func genResourceRule(rng *rand.Rand, matchAllResources, someMatchesAllResources,
 			// Add a resource request that mismatches every generated resource
 			// rule on every field, so that wildcards on a subset of
 			// fields will not defeat the mismatch
-			ri := &request.RequestInfo{
-				IsResourceRequest: true,
-				Path:              ([]string{"/api/v1/services", "/openapi/v2", "/apis/authentication.k8s.io/v1/tokenreviews"})[rng.Intn(3)],
-				Verb:              ([]string{"update", "frob", "delete"})[rng.Intn(3)],
-				APIPrefix:         "apis",
-				APIGroup:          ([]string{"authentication.k8s.io", "fubar", "blogs", "foo.com"})[rng.Intn(4)],
-				APIVersion:        "v1",
-				Resource:          ([]string{"dogs", "eels", "fish", "goats"})[rng.Intn(4)],
-				Subresource:       "", Name: "", Parts: []string{""}}
-			ri.Parts[0] = ri.Resource
-			if rng.Float32() < 0.3 {
-				ri.Subresource = "status"
-				ri.Parts = append(ri.Parts, "status")
-			}
-			if rng.Float32() < 0.5 || rr.ClusterScope {
-				ri.Namespace = fmt.Sprintf("ms%d", rng.Uint64())
-			}
+			ri := genSkippingRsc(rng)
 			skippingReqs = append(skippingReqs, ri)
 		} else if !otherMatchesAllNonResources {
 			// Add a non-resource request that mismatches every
 			// generated non-resource rule on every field, so that
 			// wildcards on a subset of fields will not defeat the
 			// mismatch
-			skippingReqs = append(skippingReqs, &request.RequestInfo{
-				IsResourceRequest: false,
-				Path:              ([]string{"/api", "/openapi/v2", "/apis/coordination.k8s.io/v1beta1"})[rng.Intn(3)],
-				Verb:              ([]string{"patch", "post", "delete"})[rng.Intn(3)],
-				APIPrefix:         "", APIGroup: "",
-				APIVersion: "", Namespace: "",
-				Resource: "", Subresource: "", Name: "", Parts: nil})
+			skippingReqs = append(skippingReqs, genSkippingNonRsc(rng))
 		}
 	}
 	if len(rr.Namespaces) > 0 || rr.ClusterScope {
 		nMatch := 1 + rng.Intn(3)
 		for i := 0; i < nMatch; i++ {
+			apig := rr.APIGroups[rng.Intn(len(rr.APIGroups))]
+			apiv := fmt.Sprintf("v%d", 1+rng.Intn(9))
+			rsc := rr.Resources[rng.Intn(len(rr.Resources))]
 			ri := &request.RequestInfo{
 				IsResourceRequest: true,
-				Path:              "/api/v1" + rr.Resources[0],
+				Path:              fmt.Sprintf("/apis/%s/%s/%s", apig, apiv, rsc),
 				Verb:              rr.Verbs[rng.Intn(len(rr.Verbs))],
-				APIPrefix:         "api",
-				APIGroup:          rr.APIGroups[rng.Intn(len(rr.APIGroups))],
-				APIVersion:        "v1",
-				Resource:          rr.Resources[rng.Intn(len(rr.Resources))],
-				Subresource:       "", Name: "", Parts: []string{""}}
+				APIPrefix:         "apis",
+				APIGroup:          apig,
+				APIVersion:        apiv,
+				Resource:          rsc,
+				Parts:             []string{rsc}}
 			if rr.Verbs[0] == fcv1a1.VerbAll {
-				ri.Verb = ([]string{"update", "frob", "delete"})[rng.Intn(3)]
+				ri.Verb = genVerb(rng, false)
 			}
 			if rr.APIGroups[0] == fcv1a1.APIGroupAll {
-				ri.APIGroup = ([]string{"authentication.k8s.io", "fubar", "blogs", "foo.com"})[rng.Intn(4)]
+				ri.APIGroup = genWord(rng, false)
 			}
 			if rr.Resources[0] == fcv1a1.ResourceAll {
-				ri.Resource = ([]string{"dogs", "eels", "fish", "goats"})[rng.Intn(4)]
+				ri.Resource = genWord(rng, false) + "s"
 			}
 			if len(rr.Namespaces) == 0 {
 				// can only match non-namespaced requests
-			} else if rr.Namespaces[0] == fcv1a1.NamespaceEvery {
-				ri.Namespace = fmt.Sprintf("ns%d", rng.Uint64())
 			} else {
-				ri.Namespace = rr.Namespaces[rng.Intn(len(rr.Namespaces))]
+				if rr.Namespaces[0] == fcv1a1.NamespaceEvery {
+					ri.Namespace = fmt.Sprintf("ns%d", rng.Uint64())
+				} else {
+					ri.Namespace = rr.Namespaces[rng.Intn(len(rr.Namespaces))]
+				}
+				ri.Path = ri.Path + "/" + ri.Namespace
 			}
 			matchingReqs = append(matchingReqs, ri)
 		}
 	}
 	return rr, valid, matchingReqs, skippingReqs
+}
+
+func genSkippingRsc(rng *rand.Rand) *request.RequestInfo {
+	rsc := genWord(rng, false) + "s"
+	apig := genWord(rng, false) + "." + genWord(rng, true)
+	apiv := fmt.Sprintf("v%d", 1+rng.Intn(9))
+	ns := fmt.Sprintf("ms%d", rng.Int())
+	ri := &request.RequestInfo{
+		IsResourceRequest: true,
+		Path:              fmt.Sprintf("/apis/%s/%s/%s/%s", apig, apiv, rsc, ns),
+		Verb:              genVerb(rng, false),
+		APIPrefix:         "apis",
+		APIGroup:          apig,
+		APIVersion:        apiv,
+		Namespace:         ns,
+		Resource:          rsc,
+		Parts:             []string{rsc}}
+	if rng.Float32() < 0.3 {
+		name := genWord(rng, false)
+		ri.Subresource = "status"
+		ri.Parts = append(ri.Parts, name, "status")
+		ri.Path = fmt.Sprintf("%s/%s/%s", ri.Path, name, ri.Subresource)
+	}
+	return ri
+}
+
+func genSkippingNonRsc(rng *rand.Rand) *request.RequestInfo {
+	return &request.RequestInfo{
+		IsResourceRequest: false,
+		Path:              fmt.Sprintf("/%s/%s", genWord(rng, false), genWord(rng, true)),
+		Verb:              genVerb(rng, false),
+	}
 }
 
 // genNonResourceRule returns a randomly generated
@@ -449,8 +457,8 @@ func genResourceRule(rng *rand.Rand, matchAllResources, someMatchesAllResources,
 // `*request.RequestInfo`.
 func genNonResourceRule(rng *rand.Rand, matchAllNonResources, otherMatchesAllResources, someMatchesAllNonResources bool) (fcv1a1.NonResourcePolicyRule, bool, []*request.RequestInfo, []*request.RequestInfo) {
 	nrr := fcv1a1.NonResourcePolicyRule{
-		Verbs:           ([]string{"get", "head", "put"})[:1+rng.Intn(3)],
-		NonResourceURLs: ([]string{"/healthz", "/metrics", "/go"})[:1+rng.Intn(3)],
+		Verbs:           genWords(rng, true, 1+rng.Intn(4), "verb"),
+		NonResourceURLs: genWords(rng, true, 1+rng.Intn(4), "path"),
 	}
 	// choose a proper subset of fields to consider wildcarding; only matters if not matching all
 	starMask := rng.Intn(3)
@@ -470,33 +478,12 @@ func genNonResourceRule(rng *rand.Rand, matchAllNonResources, otherMatchesAllRes
 			// generated non-resource rule on every field, so that
 			// wildcards on a subset of fields will not defeat the
 			// mismatch
-			skippingReqs = append(skippingReqs, &request.RequestInfo{
-				IsResourceRequest: false,
-				Path:              ([]string{"/api", "/openapi/v2", "/apis/coordination.k8s.io/v1beta1"})[rng.Intn(3)],
-				Verb:              ([]string{"patch", "post", "delete"})[rng.Intn(3)],
-				APIPrefix:         "", APIGroup: "",
-				APIVersion: "", Namespace: "",
-				Resource: "", Subresource: "", Name: "", Parts: nil})
+			skippingReqs = append(skippingReqs, genSkippingNonRsc(rng))
 		} else if !otherMatchesAllResources {
 			// Add a resource request that mismatches every generated resource
 			// rule on every field, so that wildcards on a subset of
 			// fields will not defeat the mismatch
-			ri := &request.RequestInfo{
-				IsResourceRequest: true,
-				Path:              ([]string{"/api/v1/services", "/openapi/v2", "/apis/authentication.k8s.io/v1/tokenreviews"})[rng.Intn(3)],
-				Verb:              ([]string{"update", "frob", "delete"})[rng.Intn(3)],
-				APIPrefix:         "apis",
-				APIGroup:          ([]string{"authentication.k8s.io", "fubar", "blogs", "foo.com"})[rng.Intn(4)],
-				APIVersion:        "v1",
-				Resource:          ([]string{"dogs", "eels", "fish", "goats"})[rng.Intn(4)],
-				Subresource:       "", Name: "", Parts: []string{""}}
-			ri.Parts[0] = ri.Resource
-			if rng.Float32() < 0.3 {
-				ri.Subresource = "status"
-				ri.Parts = append(ri.Parts, "status")
-			}
-			ri.Namespace = fmt.Sprintf("ms%d", rng.Uint64())
-			skippingReqs = append(skippingReqs, ri)
+			skippingReqs = append(skippingReqs, genSkippingRsc(rng))
 		}
 	}
 	nMatch := 1 + rng.Intn(3)
@@ -505,14 +492,12 @@ func genNonResourceRule(rng *rand.Rand, matchAllNonResources, otherMatchesAllRes
 			IsResourceRequest: false,
 			Path:              nrr.NonResourceURLs[rng.Intn(len(nrr.NonResourceURLs))],
 			Verb:              nrr.Verbs[rng.Intn(len(nrr.Verbs))],
-			APIPrefix:         "", APIGroup: "",
-			APIVersion: "", Resource: "",
-			Subresource: "", Name: "", Parts: []string{""}}
+		}
 		if nrr.Verbs[0] == fcv1a1.VerbAll {
-			ri.Verb = ([]string{"patch", "post", "delete"})[rng.Intn(3)]
+			ri.Verb = genVerb(rng, false)
 		}
 		if nrr.NonResourceURLs[0] == "*" {
-			ri.Path = ([]string{"/api", "/openapi/v2", "/apis/coordination.k8s.io/v1beta1"})[rng.Intn(3)]
+			ri.Path = fmt.Sprintf("/%s/%s", genWord(rng, false), genWord(rng, true))
 		}
 		matchingReqs = append(matchingReqs, ri)
 	}
@@ -528,8 +513,26 @@ func sgn(x int) int {
 	return 1
 }
 
-func pickString(rng *rand.Rand, strings ...string) string {
-	return strings[rng.Intn(len(strings))]
+type sps []stringp
+
+type stringp struct {
+	s string
+	p float32
+}
+
+func pickString(rng *rand.Rand, choices ...stringp) string {
+	var sum float32
+	for _, sp := range choices {
+		sum += sp.p
+	}
+	x := rng.Float32() * sum
+	for _, sp := range choices {
+		x -= sp.p
+		if x <= 0 {
+			return sp.s
+		}
+	}
+	return choices[len(choices)-1].s
 }
 
 func pickSetString(rng *rand.Rand, set sets.String) string {
@@ -541,4 +544,58 @@ func pickSetString(rng *rand.Rand, set sets.String) string {
 		i++
 	}
 	panic("empty set")
+}
+
+const (
+	loConsonants = "bcdfghjkl"
+	hiConsonants = "mnpqrtvwy"
+	consonants   = loConsonants + hiConsonants
+	vowels       = "aeiou"
+)
+
+var verbEndings = []string{"o", "u", "en", "et"}
+
+// Returns a word-like string that would also be word-like if "s" or
+// "en" were appended.  Draws from one of two populations depending on
+// the given bool.
+func genWord(rng *rand.Rand, sel bool) string {
+	letters1 := loConsonants
+	if sel {
+		letters1 = hiConsonants
+	}
+	return string([]byte{
+		letters1[rng.Intn(len(letters1))],
+		vowels[rng.Intn(len(vowels))],
+		consonants[rng.Intn(len(consonants))],
+	})
+}
+
+func genVerb(rng *rand.Rand, sel bool) string {
+	return genWord(rng, sel) + verbEndings[rng.Intn(len(verbEndings))]
+}
+
+func genWords(rng *rand.Rand, sel bool, n int, sort string) []string {
+	ans := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		word := genWord(rng, sel)
+		switch sort {
+		case "plural":
+			word = word + "s"
+		case "verb":
+			word = word + verbEndings[rng.Intn(len(verbEndings))]
+		case "path":
+			word = "/" + word + "/" + genWord(rng, sel)
+		}
+		ans = append(ans, word)
+	}
+	return ans
+}
+
+func genNums(rng *rand.Rand, prefix string, n int) []string {
+	ans := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		word := fmt.Sprintf("%s%d", prefix, rng.Int())
+		ans = append(ans, word)
+	}
+	return ans
 }
