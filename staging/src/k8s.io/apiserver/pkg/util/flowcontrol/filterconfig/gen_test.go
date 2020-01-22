@@ -513,8 +513,6 @@ func sgn(x int) int {
 	return 1
 }
 
-type sps []stringp
-
 type stringp struct {
 	s string
 	p float32
