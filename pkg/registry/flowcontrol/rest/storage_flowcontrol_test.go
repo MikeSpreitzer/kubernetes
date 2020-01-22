@@ -67,11 +67,6 @@ func TestFlowSchemaHasWrongSpec(t *testing.T) {
 			MatchingPrecedence: 1,
 		},
 	}
-	fs1Defaulted := &flowcontrolv1alpha1.FlowSchema{
-		Spec: flowcontrolv1alpha1.FlowSchemaSpec{
-			MatchingPrecedence: flowcontrolapisv1alpha1.FlowSchemaDefaultMatchingPrecedence,
-		},
-	}
 	testCases := []struct {
 		name         string
 		expected     *flowcontrolv1alpha1.FlowSchema
@@ -82,12 +77,6 @@ func TestFlowSchemaHasWrongSpec(t *testing.T) {
 			name:         "identical flow-schemas should work",
 			expected:     bootstrap.MandatoryFlowSchemaCatchAll,
 			actual:       bootstrap.MandatoryFlowSchemaCatchAll,
-			hasWrongSpec: false,
-		},
-		{
-			name:         "defaulted flow-schemas should work",
-			expected:     fs1,
-			actual:       fs1Defaulted,
 			hasWrongSpec: false,
 		},
 		{
@@ -125,17 +114,6 @@ func TestPriorityLevelHasWrongSpec(t *testing.T) {
 			},
 		},
 	}
-	pl1Defaulted := &flowcontrolv1alpha1.PriorityLevelConfiguration{
-		Spec: flowcontrolv1alpha1.PriorityLevelConfigurationSpec{
-			Type: flowcontrolv1alpha1.PriorityLevelEnablementLimited,
-			Limited: &flowcontrolv1alpha1.LimitedPriorityLevelConfiguration{
-				AssuredConcurrencyShares: flowcontrolapisv1alpha1.PriorityLevelConfigurationDefaultAssuredConcurrencyShares,
-				LimitResponse: flowcontrolv1alpha1.LimitResponse{
-					Type: flowcontrolv1alpha1.LimitResponseTypeReject,
-				},
-			},
-		},
-	}
 	testCases := []struct {
 		name         string
 		expected     *flowcontrolv1alpha1.PriorityLevelConfiguration
@@ -146,12 +124,6 @@ func TestPriorityLevelHasWrongSpec(t *testing.T) {
 			name:         "identical priority-level should work",
 			expected:     bootstrap.MandatoryPriorityLevelConfigurationCatchAll,
 			actual:       bootstrap.MandatoryPriorityLevelConfigurationCatchAll,
-			hasWrongSpec: false,
-		},
-		{
-			name:         "defaulted priority-level should work",
-			expected:     pl1,
-			actual:       pl1Defaulted,
 			hasWrongSpec: false,
 		},
 		{
