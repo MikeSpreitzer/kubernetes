@@ -521,7 +521,7 @@ func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 		} else {
 			klog.V(5).Infof("Retaining queues for priority level %q: config=%#+v, concurrencyLimit=%d, quiescing=%v, numPending=%d (shares=%v, shareSum=%v)", plName, plState.config, concurrencyLimit, plState.quiescing, plState.numPending, plState.config.Limited.AssuredConcurrencyShares, meal.shareSum)
 		}
-		plState.queues = plState.qsCompleter.GetQueueSet(fq.DispatchingConfig{ConcurrencyLimit: concurrencyLimit})
+		plState.queues = plState.qsCompleter.Complete(fq.DispatchingConfig{ConcurrencyLimit: concurrencyLimit})
 	}
 }
 
@@ -551,9 +551,9 @@ func qscOfPL(qsf fq.QueueSetFactory, queues fq.QueueSet, plName string, plSpec *
 	var qsc fq.QueueSetCompleter
 	var err error
 	if queues != nil {
-		qsc, err = queues.QualifyQueuingConfig(qcQS)
+		qsc, err = queues.BeginConfigChange(qcQS)
 	} else {
-		qsc, err = qsf.QualifyQueuingConfig(qcQS)
+		qsc, err = qsf.BeginConstruction(qcQS)
 	}
 	if err != nil {
 		err = errors.Wrap(err, fmt.Sprintf("priority level %q has QueuingConfiguration %#+v, which is invalid", plName, *qcAPI))
