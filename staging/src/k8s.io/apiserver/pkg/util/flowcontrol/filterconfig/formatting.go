@@ -45,6 +45,8 @@ func FmtFlowSchema(fs *fcv1a1.FlowSchema) string {
 	return buf.String()
 }
 
+// FmtFlowSchemaSpec produces a golang source expression equivalent to
+// the given spec
 func FmtFlowSchemaSpec(fsSpec *fcv1a1.FlowSchemaSpec) string {
 	var buf bytes.Buffer
 	buf.WriteString(fmt.Sprintf("v1alpha1.FlowSchemaSpec{PriorityLevelConfiguration: %#+v, MatchingPrecedence: %d, DistinguisherMethod: ",

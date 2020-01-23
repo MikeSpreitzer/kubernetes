@@ -182,7 +182,7 @@ func NewTestableController(
 	serverConcurrencyLimit int,
 	requestWaitLimit time.Duration,
 	queueSetFactory fq.QueueSetFactory,
-) *configController {
+) Controller {
 	cfgCtl := &configController{
 		queueSetFactory:        queueSetFactory,
 		serverConcurrencyLimit: serverConcurrencyLimit,

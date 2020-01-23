@@ -42,7 +42,7 @@ import (
 	fcclientv1a1 "k8s.io/client-go/kubernetes/typed/flowcontrol/v1alpha1"
 )
 
-// Interface defines how the request-management filter interacts with the underlying system.
+// Interface defines how the API Priority and Fairness filter interacts with the underlying system.
 type Interface interface {
 	// Wait decides what to do about the request with the given digest
 	// and, if appropriate, enqueues that request and waits for it to be

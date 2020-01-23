@@ -42,7 +42,7 @@ func TestDigestConfig(t *testing.T) {
 		100,         // server concurrency limit
 		time.Minute, // request wait limit
 		noRestraintQSF,
-	)
+	).(*configController)
 	rngOuter := rand.New(rand.NewSource(42))
 	for i := 1; i <= 1; i++ {
 		rng := rand.New(rand.NewSource(rngOuter.Int63()))

@@ -526,7 +526,7 @@ func buildGenericConfig(
 	}
 
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIPriorityAndFairness) {
-		genericConfig.FlowControl = BuildRequestManager(s, clientgoExternalClient, versionedInformers)
+		genericConfig.FlowControl = BuildPriorityAndFairness(s, clientgoExternalClient, versionedInformers)
 	}
 
 	return
@@ -559,8 +559,8 @@ func BuildAuthorizer(s *options.ServerRunOptions, versionedInformers clientgoinf
 	return authorizationConfig.New()
 }
 
-// BuildRequestManager constructs the request manager
-func BuildRequestManager(s *options.ServerRunOptions, extclient clientgoclientset.Interface, versionedInformer clientgoinformers.SharedInformerFactory) utilflowcontrol.Interface {
+// BuildPriorityAndFairness constructs the guts of the API Priority and Fairness filter
+func BuildPriorityAndFairness(s *options.ServerRunOptions, extclient clientgoclientset.Interface, versionedInformer clientgoinformers.SharedInformerFactory) utilflowcontrol.Interface {
 	return utilflowcontrol.New(
 		versionedInformer,
 		extclient.FlowcontrolV1alpha1(),
