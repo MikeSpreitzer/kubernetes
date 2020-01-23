@@ -54,15 +54,21 @@ filegroup(
 go_test(
     name = "go_default_test",
     srcs = [
+        "digest_test.go",
         "gen_test.go",
         "match_test.go",
     ],
     embed = [":go_default_library"],
     deps = [
         "//staging/src/k8s.io/api/flowcontrol/v1alpha1:go_default_library",
+        "//staging/src/k8s.io/apimachinery/pkg/api/equality:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/apis/meta/v1:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/util/sets:go_default_library",
+        "//staging/src/k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap:go_default_library",
         "//staging/src/k8s.io/apiserver/pkg/authentication/user:go_default_library",
         "//staging/src/k8s.io/apiserver/pkg/endpoints/request:go_default_library",
+        "//staging/src/k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/testing:go_default_library",
+        "//staging/src/k8s.io/client-go/informers:go_default_library",
+        "//staging/src/k8s.io/client-go/kubernetes/fake:go_default_library",
     ],
 )

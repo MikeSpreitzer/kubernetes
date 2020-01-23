@@ -25,10 +25,11 @@ import (
 )
 
 func TestMatching(t *testing.T) {
-	rng := rand.New(rand.NewSource(42))
-	goodPLNames := sets.NewString(genWords(rng, true, "", 5)...)
-	badPLNames := sets.NewString(genWords(rng, false, "", 5)...)
+	rngOuter := rand.New(rand.NewSource(42))
+	goodPLNames := sets.NewString(genWords(rngOuter, true, "", 5)...)
+	badPLNames := sets.NewString(genWords(rngOuter, false, "", 5)...)
 	for i := 0; i < 1000; i++ {
+		rng := rand.New(rand.NewSource(rngOuter.Int63()))
 		t.Run(fmt.Sprintf("trial%d:", i), func(t *testing.T) {
 			fs, valid, _, _, matchingDigests, skippingDigests := genFS(t, rng, fmt.Sprintf("fs%d", i), goodPLNames, badPLNames)
 			if !valid {
@@ -52,8 +53,9 @@ func TestMatching(t *testing.T) {
 }
 
 func TestPolicyRules(t *testing.T) {
-	rng := rand.New(rand.NewSource(42))
+	rngOuter := rand.New(rand.NewSource(42))
 	for i := 0; i < 100; i++ {
+		rng := rand.New(rand.NewSource(rngOuter.Int63()))
 		t.Run(fmt.Sprintf("trial%d:", i), func(t *testing.T) {
 			r := rng.Float32()
 			n := rng.Float32()

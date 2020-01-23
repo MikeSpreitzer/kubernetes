@@ -20,13 +20,50 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+	"time"
 
 	fcv1a1 "k8s.io/api/flowcontrol/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/endpoints/request"
+	fqtesting "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/testing"
 )
+
+var noRestraintQSF = fqtesting.NewNoRestraintFactory()
+
+// genPL creates a PriorityLevelConfiguration with the given name and
+// randomly generated spec.  The spec is relatively likely to be valid
+// but might be not be valid.  The returned boolean indicates whether
+// the returned object is acceptable to this package; this may be a
+// more liberal test than the official validation test.
+func genPL(rng *rand.Rand, name string) (*fcv1a1.PriorityLevelConfiguration, bool) {
+	plc := &fcv1a1.PriorityLevelConfiguration{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: fcv1a1.PriorityLevelConfigurationSpec{
+			Type: fcv1a1.PriorityLevelEnablementExempt}}
+	if rng.Float32() < 0.9 {
+		plc.Spec.Type = fcv1a1.PriorityLevelEnablementLimited
+	}
+	if rng.Float32() < 0.9 {
+		plc.Spec.Limited = &fcv1a1.LimitedPriorityLevelConfiguration{
+			AssuredConcurrencyShares: rng.Int31n(100) - 5,
+			LimitResponse: fcv1a1.LimitResponse{
+				Type: fcv1a1.LimitResponseTypeReject}}
+		if rng.Float32() < 0.9 {
+			plc.Spec.Limited.LimitResponse.Type = fcv1a1.LimitResponseTypeQueue
+		}
+		if rng.Float32() < 0.9 {
+			qc := &fcv1a1.QueuingConfiguration{
+				Queues:           rng.Int31n(256) - 25,
+				HandSize:         rng.Int31n(96) - 16,
+				QueueLengthLimit: rng.Int31n(20) - 2}
+			plc.Spec.Limited.LimitResponse.Queuing = qc
+		}
+	}
+	_, err := qscOfPL(noRestraintQSF, nil, name, &plc.Spec, time.Minute)
+	return plc, err == nil
+}
 
 // genFS creates a FlowSchema with the given name and randomly
 // generated spec, along with example matching and non-matching

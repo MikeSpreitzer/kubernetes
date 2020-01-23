@@ -38,23 +38,33 @@ func FmtFlowSchema(fs *fcv1a1.FlowSchema) string {
 		return "nil"
 	}
 	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("&v1alpha1.FlowSchema{ObjectMeta: %#+v, Spec: v1alpha1.FlowSchemaSpec{PriorityLevelConfiguration: %#+v, MatchingPrecedence: %d, DistinguisherMethod: ",
-		fs.ObjectMeta, fs.Spec.PriorityLevelConfiguration,
-		fs.Spec.MatchingPrecedence))
-	if fs.Spec.DistinguisherMethod == nil {
+	buf.WriteString(fmt.Sprintf("&v1alpha1.FlowSchema{ObjectMeta: %#+v, Spec: ",
+		fs.ObjectMeta))
+	buf.WriteString(FmtFlowSchemaSpec(&fs.Spec))
+	buf.WriteString(fmt.Sprintf(", Status: %#+v}", fs.Status))
+	return buf.String()
+}
+
+func FmtFlowSchemaSpec(fsSpec *fcv1a1.FlowSchemaSpec) string {
+	var buf bytes.Buffer
+	buf.WriteString(fmt.Sprintf("v1alpha1.FlowSchemaSpec{PriorityLevelConfiguration: %#+v, MatchingPrecedence: %d, DistinguisherMethod: ",
+		fsSpec.PriorityLevelConfiguration,
+		fsSpec.MatchingPrecedence))
+	if fsSpec.DistinguisherMethod == nil {
 		buf.WriteString("nil")
 	} else {
-		buf.WriteString(fmt.Sprintf("&%#+v", *fs.Spec.DistinguisherMethod))
+		buf.WriteString(fmt.Sprintf("&%#+v", *fsSpec.DistinguisherMethod))
 	}
 	buf.WriteString(", Rules: []v1alpha1.PolicyRulesWithSubjects{")
-	for idx, rule := range fs.Spec.Rules {
+	for idx, rule := range fsSpec.Rules {
 		if idx > 0 {
 			buf.WriteString(", ")
 		}
 		buf.WriteString(FmtPolicyRuleSlim(rule))
 	}
-	buf.WriteString(fmt.Sprintf("}}, Status: %#+v}", fs.Status))
+	buf.WriteString("}}")
 	return buf.String()
+
 }
 
 // FmtPolicyRule produces a golang source expression of the value.

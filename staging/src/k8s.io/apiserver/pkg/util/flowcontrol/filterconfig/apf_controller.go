@@ -182,7 +182,7 @@ func NewTestableController(
 	serverConcurrencyLimit int,
 	requestWaitLimit time.Duration,
 	queueSetFactory fq.QueueSetFactory,
-) Controller {
+) *configController {
 	cfgCtl := &configController{
 		queueSetFactory:        queueSetFactory,
 		serverConcurrencyLimit: serverConcurrencyLimit,
@@ -437,7 +437,10 @@ func (meal *cfgMeal) digestFlowSchemasLocked(newFSs []*fctypesv1a1.FlowSchema) {
 		meal.presyncFlowSchemaStatus(fs, !goodPriorityRef)
 
 		if !goodPriorityRef {
+			klog.V(6).Infof("Ignoring FlowSchema %s because of bad priority level reference %q", fs.Name, fs.Spec.PriorityLevelConfiguration.Name)
 			continue
+		} else {
+			klog.V(6).Infof("Accpeting FlowSchema %#+v", fs)
 		}
 		fsSeq = append(fsSeq, newFSs[i])
 		meal.haveExemptFS = meal.haveExemptFS || fs.Name == fctypesv1a1.FlowSchemaNameExempt
