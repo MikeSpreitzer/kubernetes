@@ -620,10 +620,10 @@ func (cfgCtl *configController) Match(rd RequestDigest) (string, *fctypesv1a1.Fl
 				return fs.Name, fs.Spec.DistinguisherMethod, plName, nil
 			}
 			plState.numPending++
-			matchId := &plState
-			klog.V(7).Infof("Match(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, matchId=%p", rd, fs.Name, fs.Spec.DistinguisherMethod, plName, matchId)
+			matchID := &plName
+			klog.V(7).Infof("Match(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, matchID=%p", rd, fs.Name, fs.Spec.DistinguisherMethod, plName, matchID)
 			startFn := func(ctx context.Context, hashValue uint64, descr1, descr2 interface{}) (execute bool, afterExecution func()) {
-				klog.V(7).Infof("For matchId=%p, startFn(ctx, %v, %#+v, %#+v) called", matchId, hashValue, descr1, descr2)
+				klog.V(7).Infof("For matchID=%p, startFn(ctx, %v, %#+v, %#+v) called", matchID, hashValue, descr1, descr2)
 				req := func() fq.Request {
 					cfgCtl.lock.Lock()
 					defer cfgCtl.lock.Unlock()
@@ -637,14 +637,14 @@ func (cfgCtl *configController) Match(rd RequestDigest) (string, *fctypesv1a1.Fl
 				if req == nil {
 					return false, func() {}
 				}
-				execId := &req
 				exec, idle2, afterExec := req.Wait()
+				execID := &exec
 				if idle2 {
 					cfgCtl.maybeReap(plName)
 				}
-				klog.V(7).Infof("For matchId=%p, startFn(..) => exec=%v, execId=%p", matchId, exec, execId)
+				klog.V(7).Infof("For matchID=%p, startFn(..) => exec=%v, execID=%p", matchID, exec, execID)
 				return exec, func() {
-					klog.V(7).Infof("For execId=%p, after() called", execId)
+					klog.V(7).Infof("For execID=%p, after() called", execID)
 					idle3 := afterExec()
 					if idle3 {
 						cfgCtl.maybeReap(plName)

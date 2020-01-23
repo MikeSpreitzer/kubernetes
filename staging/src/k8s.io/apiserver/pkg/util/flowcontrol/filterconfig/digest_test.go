@@ -50,8 +50,8 @@ func TestDigestConfig(t *testing.T) {
 			oldGoodPLMap := map[string]*fcv1a1.PriorityLevelConfiguration{}
 			oldAllPLNames := sets.NewString()
 			trialName := fmt.Sprintf("trial%d-0", i)
-			newPLs, newGoodPLMap, newGoodPLNames, newBadPLNames := genPLs(rng, trialName, 0)
-			newFSs, newGoodFSMap, newFSDigestses := genFSs(t, rng, trialName, newGoodPLNames, newBadPLNames, 0)
+			_, newGoodPLMap, newGoodPLNames, newBadPLNames := genPLs(rng, trialName, 0)
+			_, newGoodFSMap, newFSDigestses := genFSs(t, rng, trialName, newGoodPLNames, newBadPLNames, 0)
 			for j := 0; ; {
 				// Check that the latest digestion did the right thing
 				newMandBitsFS := seekMandFSs(newGoodFSMap)
@@ -83,6 +83,9 @@ func TestDigestConfig(t *testing.T) {
 
 				// Now create a new config and digest it
 				trialName := fmt.Sprintf("trial%d-%d", i, j)
+				var newPLs []*fcv1a1.PriorityLevelConfiguration
+				var newFSs []*fcv1a1.FlowSchema
+				oldAllPLNames = expectedPLNames
 				newPLs, newGoodPLMap, newGoodPLNames, newBadPLNames = genPLs(rng, trialName, 1+rng.Intn(3))
 				newFSs, newGoodFSMap, newFSDigestses = genFSs(t, rng, trialName, newGoodPLNames, newBadPLNames, 1+rng.Intn(5))
 
@@ -242,13 +245,6 @@ type mandBits struct{ exempt, catchAll bool }
 
 func (mb mandBits) count() int {
 	return btoi(mb.exempt) + btoi(mb.catchAll)
-}
-
-func seekMandPLs(pls map[string]*fcv1a1.PriorityLevelConfiguration) mandBits {
-	return mandBits{
-		exempt:   pls[fcv1a1.PriorityLevelConfigurationNameExempt] != nil,
-		catchAll: pls[fcv1a1.PriorityLevelConfigurationNameCatchAll] != nil,
-	}
 }
 
 func seekMandFSs(fses map[string]*fcv1a1.FlowSchema) mandBits {
