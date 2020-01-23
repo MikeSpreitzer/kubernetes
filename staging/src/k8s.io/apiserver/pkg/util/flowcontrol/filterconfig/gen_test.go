@@ -340,9 +340,9 @@ func genResourceRule(rng *rand.Rand, matchAllResources, someMatchesAllResources,
 		nns = 1 + rng.Intn(3)
 	}
 	rr := fcv1a1.ResourcePolicyRule{
-		Verbs:        genWords(rng, true, 1+rng.Intn(3), "verb"),
-		APIGroups:    genWords(rng, true, 1+rng.Intn(3), ""),
-		Resources:    genWords(rng, true, 1+rng.Intn(3), "plural"),
+		Verbs:        genWords(rng, true, "verb", 1+rng.Intn(3)),
+		APIGroups:    genWords(rng, true, "apigrp", 1+rng.Intn(3)),
+		Resources:    genWords(rng, true, "plural", 1+rng.Intn(3)),
 		ClusterScope: matchAllResources || rng.Intn(2) == 0,
 		Namespaces:   genNums(rng, "ns", 4)[:nns],
 	}
@@ -395,13 +395,13 @@ func genResourceRule(rng *rand.Rand, matchAllResources, someMatchesAllResources,
 				Resource:          rsc,
 				Parts:             []string{rsc}}
 			if rr.Verbs[0] == fcv1a1.VerbAll {
-				ri.Verb = genVerb(rng, false)
+				ri.Verb = genWord(rng, false, "verb")
 			}
 			if rr.APIGroups[0] == fcv1a1.APIGroupAll {
-				ri.APIGroup = genWord(rng, false)
+				ri.APIGroup = genWord(rng, false, "apigrp")
 			}
 			if rr.Resources[0] == fcv1a1.ResourceAll {
-				ri.Resource = genWord(rng, false) + "s"
+				ri.Resource = genWord(rng, false, "plural")
 			}
 			if len(rr.Namespaces) == 0 {
 				// can only match non-namespaced requests
@@ -420,14 +420,14 @@ func genResourceRule(rng *rand.Rand, matchAllResources, someMatchesAllResources,
 }
 
 func genSkippingRsc(rng *rand.Rand) *request.RequestInfo {
-	rsc := genWord(rng, false) + "s"
-	apig := genWord(rng, false) + "." + genWord(rng, true)
+	rsc := genWord(rng, false, "plural")
+	apig := genWord(rng, false, "apigrp")
 	apiv := fmt.Sprintf("v%d", 1+rng.Intn(9))
 	ns := fmt.Sprintf("ms%d", rng.Int())
 	ri := &request.RequestInfo{
 		IsResourceRequest: true,
 		Path:              fmt.Sprintf("/apis/%s/%s/%s/%s", apig, apiv, rsc, ns),
-		Verb:              genVerb(rng, false),
+		Verb:              genWord(rng, false, "verb"),
 		APIPrefix:         "apis",
 		APIGroup:          apig,
 		APIVersion:        apiv,
@@ -435,7 +435,7 @@ func genSkippingRsc(rng *rand.Rand) *request.RequestInfo {
 		Resource:          rsc,
 		Parts:             []string{rsc}}
 	if rng.Float32() < 0.3 {
-		name := genWord(rng, false)
+		name := genWord(rng, false, "") + genWord(rng, true, "")
 		ri.Subresource = "status"
 		ri.Parts = append(ri.Parts, name, "status")
 		ri.Path = fmt.Sprintf("%s/%s/%s", ri.Path, name, ri.Subresource)
@@ -446,8 +446,8 @@ func genSkippingRsc(rng *rand.Rand) *request.RequestInfo {
 func genSkippingNonRsc(rng *rand.Rand) *request.RequestInfo {
 	return &request.RequestInfo{
 		IsResourceRequest: false,
-		Path:              fmt.Sprintf("/%s/%s", genWord(rng, false), genWord(rng, true)),
-		Verb:              genVerb(rng, false),
+		Path:              genWord(rng, false, "path"),
+		Verb:              genWord(rng, false, "verb"),
 	}
 }
 
@@ -457,8 +457,8 @@ func genSkippingNonRsc(rng *rand.Rand) *request.RequestInfo {
 // `*request.RequestInfo`.
 func genNonResourceRule(rng *rand.Rand, matchAllNonResources, otherMatchesAllResources, someMatchesAllNonResources bool) (fcv1a1.NonResourcePolicyRule, bool, []*request.RequestInfo, []*request.RequestInfo) {
 	nrr := fcv1a1.NonResourcePolicyRule{
-		Verbs:           genWords(rng, true, 1+rng.Intn(4), "verb"),
-		NonResourceURLs: genWords(rng, true, 1+rng.Intn(4), "path"),
+		Verbs:           genWords(rng, true, "verb", 1+rng.Intn(4)),
+		NonResourceURLs: genWords(rng, true, "path", 1+rng.Intn(4)),
 	}
 	// choose a proper subset of fields to consider wildcarding; only matters if not matching all
 	starMask := rng.Intn(3)
@@ -494,10 +494,10 @@ func genNonResourceRule(rng *rand.Rand, matchAllNonResources, otherMatchesAllRes
 			Verb:              nrr.Verbs[rng.Intn(len(nrr.Verbs))],
 		}
 		if nrr.Verbs[0] == fcv1a1.VerbAll {
-			ri.Verb = genVerb(rng, false)
+			ri.Verb = genWord(rng, false, "verb")
 		}
 		if nrr.NonResourceURLs[0] == "*" {
-			ri.Path = fmt.Sprintf("/%s/%s", genWord(rng, false), genWord(rng, true))
+			ri.Path = genWord(rng, false, "path")
 		}
 		matchingReqs = append(matchingReqs, ri)
 	}
@@ -545,46 +545,49 @@ func pickSetString(rng *rand.Rand, set sets.String) string {
 }
 
 const (
-	loConsonants = "bcdfghjkl"
-	hiConsonants = "mnpqrtvwy"
-	consonants   = loConsonants + hiConsonants
-	vowels       = "aeiou"
+	loInitials = "bcdfghjklm"
+	hiInitials = "npqrstvwyz"
+	finals     = "bcdfghjklmnpqrtvwy"
+	vowels     = "aeiou"
 )
 
-var verbEndings = []string{"o", "u", "en", "et"}
+var verbEndings = []string{"o", "u", "en", "er"}
 
-// Returns a word-like string that would also be word-like if "s" or
-// "en" were appended.  Draws from one of two populations depending on
-// the given bool.
-func genWord(rng *rand.Rand, sel bool) string {
-	letters1 := loConsonants
+// Returns a random string that looks like it could be a word root,
+// and is suitable for appending "s" or a vowel.  The result is drawn
+// from one of two populations as chosen by the given bool.
+func genRoot(rng *rand.Rand, sel bool) string {
+	letters1 := loInitials
 	if sel {
-		letters1 = hiConsonants
+		letters1 = hiInitials
 	}
 	return string([]byte{
 		letters1[rng.Intn(len(letters1))],
 		vowels[rng.Intn(len(vowels))],
-		consonants[rng.Intn(len(consonants))],
+		finals[rng.Intn(len(finals))],
 	})
 }
 
-func genVerb(rng *rand.Rand, sel bool) string {
-	return genWord(rng, sel) + verbEndings[rng.Intn(len(verbEndings))]
+// Returns a random word-like string of the given sort.
+func genWord(rng *rand.Rand, sel bool, sort string) string {
+	switch sort {
+	case "plural":
+		return genRoot(rng, sel) + "s"
+	case "verb":
+		return genRoot(rng, sel) + verbEndings[rng.Intn(len(verbEndings))]
+	case "path":
+		return "/" + genRoot(rng, sel) + "/" + genRoot(rng, sel)
+	case "apigrp":
+		return genRoot(rng, sel) + "." + genRoot(rng, sel)
+	default:
+		return genRoot(rng, sel)
+	}
 }
 
-func genWords(rng *rand.Rand, sel bool, n int, sort string) []string {
+func genWords(rng *rand.Rand, sel bool, sort string, n int) []string {
 	ans := make([]string, 0, n)
 	for i := 0; i < n; i++ {
-		word := genWord(rng, sel)
-		switch sort {
-		case "plural":
-			word = word + "s"
-		case "verb":
-			word = word + verbEndings[rng.Intn(len(verbEndings))]
-		case "path":
-			word = "/" + word + "/" + genWord(rng, sel)
-		}
-		ans = append(ans, word)
+		ans = append(ans, genWord(rng, sel, sort))
 	}
 	return ans
 }

@@ -26,8 +26,8 @@ import (
 
 func TestMatching(t *testing.T) {
 	rng := rand.New(rand.NewSource(42))
-	goodPLNames := sets.NewString(genWords(rng, true, 5, "")...)
-	badPLNames := sets.NewString(genWords(rng, false, 5, "")...)
+	goodPLNames := sets.NewString(genWords(rng, true, "", 5)...)
+	badPLNames := sets.NewString(genWords(rng, false, "", 5)...)
 	for i := 0; i < 1000; i++ {
 		t.Run(fmt.Sprintf("trial%d:", i), func(t *testing.T) {
 			fs, valid, _, _, matchingDigests, skippingDigests := genFS(t, rng, fmt.Sprintf("fs%d", i), goodPLNames, badPLNames)
