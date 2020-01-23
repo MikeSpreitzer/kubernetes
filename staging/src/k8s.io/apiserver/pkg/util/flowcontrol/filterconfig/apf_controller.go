@@ -616,10 +616,14 @@ func (cfgCtl *configController) Match(rd RequestDigest) (string, *fctypesv1a1.Fl
 			plName := fs.Spec.PriorityLevelConfiguration.Name
 			plState := cfgCtl.priorityLevelStates[plName]
 			if plState.config.Type == fctypesv1a1.PriorityLevelEnablementExempt {
+				klog.V(7).Infof("Match(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, immediate", rd, fs.Name, fs.Spec.DistinguisherMethod, plName)
 				return fs.Name, fs.Spec.DistinguisherMethod, plName, nil
 			}
 			plState.numPending++
-			return fs.Name, fs.Spec.DistinguisherMethod, plName, func(ctx context.Context, hashValue uint64, descr1, descr2 interface{}) (execute bool, afterExecution func()) {
+			matchId := &plState
+			klog.V(7).Infof("Match(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, matchId=%p", rd, fs.Name, fs.Spec.DistinguisherMethod, plName, matchId)
+			startFn := func(ctx context.Context, hashValue uint64, descr1, descr2 interface{}) (execute bool, afterExecution func()) {
+				klog.V(7).Infof("For matchId=%p, startFn(ctx, %v, %#+v, %#+v) called", matchId, hashValue, descr1, descr2)
 				req := func() fq.Request {
 					cfgCtl.lock.Lock()
 					defer cfgCtl.lock.Unlock()
@@ -633,17 +637,21 @@ func (cfgCtl *configController) Match(rd RequestDigest) (string, *fctypesv1a1.Fl
 				if req == nil {
 					return false, func() {}
 				}
+				execId := &req
 				exec, idle2, afterExec := req.Wait()
 				if idle2 {
 					cfgCtl.maybeReap(plName)
 				}
+				klog.V(7).Infof("For matchId=%p, startFn(..) => exec=%v, execId=%p", matchId, exec, execId)
 				return exec, func() {
+					klog.V(7).Infof("For execId=%p, after() called", execId)
 					idle3 := afterExec()
 					if idle3 {
 						cfgCtl.maybeReap(plName)
 					}
 				}
 			}
+			return fs.Name, fs.Spec.DistinguisherMethod, plName, startFn
 		}
 	}
 	// This can never happen because every configState has a
