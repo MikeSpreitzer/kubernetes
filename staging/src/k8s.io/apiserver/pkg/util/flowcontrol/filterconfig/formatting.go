@@ -17,12 +17,7 @@ limitations under the License.
 package filterconfig
 
 import (
-	"bytes"
 	"fmt"
-
-	fcv1a1 "k8s.io/api/flowcontrol/v1alpha1"
-	"k8s.io/apiserver/pkg/authentication/user"
-	"k8s.io/apiserver/pkg/endpoints/request"
 )
 
 var _ fmt.GoStringer = RequestDigest{}
@@ -30,100 +25,4 @@ var _ fmt.GoStringer = RequestDigest{}
 // GoString produces a golang source expression of the value.
 func (rd RequestDigest) GoString() string {
 	return fmt.Sprintf("RequestDigest{RequestInfo: %#+v, User: %#+v}", rd.RequestInfo, rd.User)
-}
-
-// FmtFlowSchema produces a golang source expression of the value.
-func FmtFlowSchema(fs *fcv1a1.FlowSchema) string {
-	if fs == nil {
-		return "nil"
-	}
-	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("&v1alpha1.FlowSchema{ObjectMeta: %#+v, Spec: ",
-		fs.ObjectMeta))
-	buf.WriteString(FmtFlowSchemaSpec(&fs.Spec))
-	buf.WriteString(fmt.Sprintf(", Status: %#+v}", fs.Status))
-	return buf.String()
-}
-
-// FmtFlowSchemaSpec produces a golang source expression equivalent to
-// the given spec
-func FmtFlowSchemaSpec(fsSpec *fcv1a1.FlowSchemaSpec) string {
-	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("v1alpha1.FlowSchemaSpec{PriorityLevelConfiguration: %#+v, MatchingPrecedence: %d, DistinguisherMethod: ",
-		fsSpec.PriorityLevelConfiguration,
-		fsSpec.MatchingPrecedence))
-	if fsSpec.DistinguisherMethod == nil {
-		buf.WriteString("nil")
-	} else {
-		buf.WriteString(fmt.Sprintf("&%#+v", *fsSpec.DistinguisherMethod))
-	}
-	buf.WriteString(", Rules: []v1alpha1.PolicyRulesWithSubjects{")
-	for idx, rule := range fsSpec.Rules {
-		if idx > 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString(FmtPolicyRuleSlim(rule))
-	}
-	buf.WriteString("}}")
-	return buf.String()
-
-}
-
-// FmtPolicyRule produces a golang source expression of the value.
-func FmtPolicyRule(rule fcv1a1.PolicyRulesWithSubjects) string {
-	return "v1alpha1.PolicyRulesWithSubjects" + FmtPolicyRuleSlim(rule)
-}
-
-// FmtPolicyRuleSlim produces a golang source expression of the value
-// but without the leading type name.  See above for an example
-// context where this is useful.
-func FmtPolicyRuleSlim(rule fcv1a1.PolicyRulesWithSubjects) string {
-	var buf bytes.Buffer
-	buf.WriteString("{Subjects: []v1alpha1.Subject{")
-	for jdx, subj := range rule.Subjects {
-		if jdx > 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString(fmt.Sprintf("{Kind: %q", subj.Kind))
-		if subj.User != nil {
-			buf.WriteString(fmt.Sprintf(", User: &%#+v", *subj.User))
-		}
-		if subj.Group != nil {
-			buf.WriteString(fmt.Sprintf(", Group: &%#+v", *subj.Group))
-		}
-		if subj.ServiceAccount != nil {
-			buf.WriteString(fmt.Sprintf(", ServiceAcount: &%#+v", *subj.ServiceAccount))
-		}
-		buf.WriteString("}")
-	}
-	buf.WriteString(fmt.Sprintf("}, ResourceRules: %#+v, NonResourceRules: %#+v}", rule.ResourceRules, rule.NonResourceRules))
-	return buf.String()
-}
-
-// FmtUsers produces a golang source expression of the value.
-func FmtUsers(list []user.Info) string {
-	var buf bytes.Buffer
-	buf.WriteString("[]user.Info{")
-	for idx, member := range list {
-		if idx > 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString(fmt.Sprintf("%#+v", member))
-	}
-	buf.WriteString("}")
-	return buf.String()
-}
-
-// FmtRequests produces a golang source expression of the value.
-func FmtRequests(list []*request.RequestInfo) string {
-	var buf bytes.Buffer
-	buf.WriteString("[]*request.RequestInfo{")
-	for idx, member := range list {
-		if idx > 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString(fmt.Sprintf("%#+v", member))
-	}
-	buf.WriteString("}")
-	return buf.String()
 }

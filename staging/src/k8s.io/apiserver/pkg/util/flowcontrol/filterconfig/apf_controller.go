@@ -33,6 +33,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	fcboot "k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap"
+	fmtv1a1 "k8s.io/apiserver/pkg/apis/flowcontrol/v1alpha1"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/util/apihelpers"
@@ -83,7 +84,7 @@ type Controller interface {
 // then `afterExecution` is irrelevant and the request should be
 // rejected.  Otherwise the request should be executed and
 // `afterExecution` must be called exactly once.
-type StartFunction func(ctx context.Context, hashValue uint64, descr1, descr2 interface{}) (execute bool, afterExecution func())
+type StartFunction func(ctx context.Context, hashValue uint64) (execute bool, afterExecution func())
 
 // RequestDigest holds necessary info from request for flow-control
 type RequestDigest struct {
@@ -401,7 +402,7 @@ func (meal *cfgMeal) digestNewPLsLocked(newPLs []*fctypesv1a1.PriorityLevelConfi
 		}
 		qsCompleter, err := qscOfPL(meal.cfgCtl.queueSetFactory, state.queues, pl.Name, &pl.Spec, meal.cfgCtl.requestWaitLimit)
 		if err != nil {
-			klog.Warningf("Ignoring PriorityLevelConfiguration object %s because its spec (%#+v) is broken: %s", pl.Name, pl.Spec, err.Error())
+			klog.Warningf("Ignoring PriorityLevelConfiguration object %s because its spec (%s) is broken: %s", pl.Name, fmtv1a1.FmtPriorityLevelConfigurationSpec(&pl.Spec), err.Error())
 			continue
 		}
 		state.qsCompleter = qsCompleter
@@ -622,19 +623,25 @@ func (cfgCtl *configController) Match(rd RequestDigest) (string, *fctypesv1a1.Fl
 			plState.numPending++
 			matchID := &plName
 			klog.V(7).Infof("Match(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, matchID=%p", rd, fs.Name, fs.Spec.DistinguisherMethod, plName, matchID)
-			startFn := func(ctx context.Context, hashValue uint64, descr1, descr2 interface{}) (execute bool, afterExecution func()) {
-				klog.V(7).Infof("For matchID=%p, startFn(ctx, %v, %#+v, %#+v) called", matchID, hashValue, descr1, descr2)
+			startCalls := 0
+			startFn := func(ctx context.Context, hashValue uint64) (execute bool, afterExecution func()) {
+				startCalls++
+				klog.V(7).Infof("For matchID=%p, startFn(ctx, %v) startCalls:=%d", matchID, hashValue, startCalls)
+				if startCalls > 1 {
+					panic(fmt.Sprintf("Match(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, matchID=%p startCalls:=%d", rd, fs.Name, fs.Spec.DistinguisherMethod, plName, matchID, startCalls))
+				}
 				req := func() fq.Request {
 					cfgCtl.lock.Lock()
 					defer cfgCtl.lock.Unlock()
 					plState.numPending--
-					req, idle1 := plState.queues.StartRequest(ctx, hashValue, descr1, descr2)
+					req, idle1 := plState.queues.StartRequest(ctx, hashValue, rd.RequestInfo, rd.User)
 					if idle1 {
 						cfgCtl.maybeReapLocked(plName, plState)
 					}
 					return req
 				}()
 				if req == nil {
+					klog.V(7).Infof("For matchID=%p, startFn(ctx, %v): reject", matchID, hashValue)
 					return false, func() {}
 				}
 				exec, idle2, afterExec := req.Wait()
@@ -643,8 +650,13 @@ func (cfgCtl *configController) Match(rd RequestDigest) (string, *fctypesv1a1.Fl
 					cfgCtl.maybeReap(plName)
 				}
 				klog.V(7).Infof("For matchID=%p, startFn(..) => exec=%v, execID=%p", matchID, exec, execID)
+				afterCalls := 0
 				return exec, func() {
-					klog.V(7).Infof("For execID=%p, after() called", execID)
+					afterCalls++
+					klog.V(7).Infof("For execID=%p, after() calls:=%d", execID, afterCalls)
+					if afterCalls > 1 {
+						panic(fmt.Sprintf("Match(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, matchID=%p afterCalls:=%d", rd, fs.Name, fs.Spec.DistinguisherMethod, plName, matchID, afterCalls))
+					}
 					idle3 := afterExec()
 					if idle3 {
 						cfgCtl.maybeReap(plName)

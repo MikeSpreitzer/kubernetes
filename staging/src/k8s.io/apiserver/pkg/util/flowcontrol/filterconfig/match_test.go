@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/util/sets"
+	fmtv1a1 "k8s.io/apiserver/pkg/apis/flowcontrol/v1alpha1"
 )
 
 func TestMatching(t *testing.T) {
@@ -33,19 +34,19 @@ func TestMatching(t *testing.T) {
 		t.Run(fmt.Sprintf("trial%d:", i), func(t *testing.T) {
 			fs, valid, _, _, matchingDigests, skippingDigests := genFS(t, rng, fmt.Sprintf("fs%d", i), goodPLNames, badPLNames)
 			if !valid {
-				t.Logf("Not testing invalid %s", FmtFlowSchema(fs))
+				t.Logf("Not testing invalid %s", fmtv1a1.FmtFlowSchema(fs))
 				return
 			}
 			for _, digest := range matchingDigests {
 				a := matchesFlowSchema(digest, fs)
 				if !a {
-					t.Errorf("Expected %s to match %#+v but it did not", FmtFlowSchema(fs), digest)
+					t.Errorf("Fail: Expected %s to match %#+v but it did not", fmtv1a1.FmtFlowSchema(fs), digest)
 				}
 			}
 			for _, digest := range skippingDigests {
 				a := matchesFlowSchema(digest, fs)
 				if a {
-					t.Errorf("Expected %s to not match %#+v but it did", FmtFlowSchema(fs), digest)
+					t.Errorf("Fail: Expected %s to not match %#+v but it did", fmtv1a1.FmtFlowSchema(fs), digest)
 				}
 			}
 		})
@@ -60,18 +61,18 @@ func TestPolicyRules(t *testing.T) {
 			r := rng.Float32()
 			n := rng.Float32()
 			policyRule, valid, matchingDigests, skippingDigests := genPolicyRuleWithSubjects(t, rng, r < 0.15, n < 0.15, r < 0.05, n < 0.05)
-			t.Logf("policyRule=%s, valid=%v, md=%#+v, sd=%#+v", FmtPolicyRule(policyRule), valid, matchingDigests, skippingDigests)
+			t.Logf("policyRule=%s, valid=%v, md=%#+v, sd=%#+v", fmtv1a1.FmtPolicyRule(policyRule), valid, matchingDigests, skippingDigests)
 			if !valid {
 				return
 			}
 			for _, digest := range matchingDigests {
 				if !matchesPolicyRule(digest, &policyRule) {
-					t.Logf("Expected %s to match %#+v but it did not", FmtPolicyRule(policyRule), digest)
+					t.Logf("Expected %s to match %#+v but it did not", fmtv1a1.FmtPolicyRule(policyRule), digest)
 				}
 			}
 			for _, digest := range skippingDigests {
 				if matchesPolicyRule(digest, &policyRule) {
-					t.Logf("Expected %s to not match %#+v but it did", FmtPolicyRule(policyRule), digest)
+					t.Logf("Expected %s to not match %#+v but it did", fmtv1a1.FmtPolicyRule(policyRule), digest)
 				}
 			}
 		})

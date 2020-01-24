@@ -25,6 +25,7 @@ import (
 	fcv1a1 "k8s.io/api/flowcontrol/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	fmtv1a1 "k8s.io/apiserver/pkg/apis/flowcontrol/v1alpha1"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/endpoints/request"
 	fqtesting "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/testing"
@@ -212,7 +213,7 @@ func genPolicyRuleWithSubjects(t *testing.T, rng *rand.Rand, someMatchesAllResou
 		skippingReqs = append(skippingReqs, nsrs...)
 	}
 	rule := fcv1a1.PolicyRulesWithSubjects{subjects, resourceRules, nonResourceRules}
-	t.Logf("For someMatchesAllResourceRequests=%v, someMatchesAllNonResourceRequests=%v: generated prws=%s, valid=%v, marr=%v, manrr=%v, mu=%s, su=%s, mr=%s, sr=%s", someMatchesAllResourceRequests, someMatchesAllNonResourceRequests, FmtPolicyRule(rule), valid, matchAllResourceRequests, matchAllNonResourceRequests, FmtUsers(matchingUsers), FmtUsers(skippingUsers), FmtRequests(matchingReqs), FmtRequests(skippingReqs))
+	t.Logf("For someMatchesAllResourceRequests=%v, someMatchesAllNonResourceRequests=%v: generated prws=%s, valid=%v, marr=%v, manrr=%v, mu=%s, su=%s, mr=%s, sr=%s", someMatchesAllResourceRequests, someMatchesAllNonResourceRequests, fmtv1a1.FmtPolicyRule(rule), valid, matchAllResourceRequests, matchAllNonResourceRequests, fmtv1a1.FmtUsers(matchingUsers), fmtv1a1.FmtUsers(skippingUsers), fmtv1a1.FmtRequests(matchingReqs), fmtv1a1.FmtRequests(skippingReqs))
 	var matchingDigests, skippingDigests []RequestDigest
 	sgnMatchingUsers := sgn(len(matchingUsers))
 	sgnMatchingReqs := sgn(len(matchingReqs))
@@ -224,7 +225,7 @@ func genPolicyRuleWithSubjects(t *testing.T, rng *rand.Rand, someMatchesAllResou
 		matchingDigests = append(matchingDigests, rd)
 		t.Logf("Added matching digest %#+v", rd)
 		if valid && !matchesPolicyRule(rd, &rule) {
-			t.Logf("Check failure: rule %s does not match digest %#+v", FmtPolicyRule(rule), rd)
+			t.Logf("Check failure: rule %s does not match digest %#+v", fmtv1a1.FmtPolicyRule(rule), rd)
 		}
 	}
 	sgnSkippingUsers := sgn(len(skippingUsers))
@@ -238,7 +239,7 @@ func genPolicyRuleWithSubjects(t *testing.T, rng *rand.Rand, someMatchesAllResou
 		skippingDigests = append(skippingDigests, rd)
 		t.Logf("Added skipping digest %#+v", rd)
 		if valid && matchesPolicyRule(rd, &rule) {
-			t.Logf("Check failure: rule %s matches digest %#+v", FmtPolicyRule(rule), rd)
+			t.Logf("Check failure: rule %s matches digest %#+v", fmtv1a1.FmtPolicyRule(rule), rd)
 		}
 	}
 	return rule, valid, matchingDigests, skippingDigests

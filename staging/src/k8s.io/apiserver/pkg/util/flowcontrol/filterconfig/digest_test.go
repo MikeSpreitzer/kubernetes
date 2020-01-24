@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"testing"
 	"time"
 
@@ -28,13 +29,20 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	fcboot "k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap"
+	fmtv1a1 "k8s.io/apiserver/pkg/apis/flowcontrol/v1alpha1"
 	"k8s.io/client-go/informers"
 	clientsetfake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/klog"
 )
+
+func TestMain(m *testing.M) {
+	klog.InitFlags(nil)
+	os.Exit(m.Run())
+}
 
 func TestDigestConfig(t *testing.T) {
 	rngOuter := rand.New(rand.NewSource(1234567890123456789))
-	for i := 1; i <= 2; i++ {
+	for i := 1; i <= 3; i++ {
 		rng := rand.New(rand.NewSource(int64(rngOuter.Uint64())))
 		clientset := clientsetfake.NewSimpleClientset()
 		informerFactory := informers.NewSharedInformerFactory(clientset, 0)
@@ -47,45 +55,49 @@ func TestDigestConfig(t *testing.T) {
 			noRestraintQSF,
 		).(*configController)
 		t.Run(fmt.Sprintf("trial%d:", i), func(t *testing.T) {
-			oldGoodPLMap := map[string]*fcv1a1.PriorityLevelConfiguration{}
-			oldAllPLNames := sets.NewString()
+			oldPLStates := map[string]*priorityLevelState{}
 			trialName := fmt.Sprintf("trial%d-0", i)
 			_, newGoodPLMap, newGoodPLNames, newBadPLNames := genPLs(rng, trialName, 0)
 			_, newGoodFSMap, newFSDigestses := genFSs(t, rng, trialName, newGoodPLNames, newBadPLNames, 0)
 			for j := 0; ; {
 				// Check that the latest digestion did the right thing
 				newMandBitsFS := seekMandFSs(newGoodFSMap)
-				// Because this test currently uses QueueSets that
-				// never go idle, all the old priority levels are
-				// expected to survive.
-				expectedPLNames := oldAllPLNames.Union(newGoodPLNames)
+				expectedPLNames := newGoodPLNames.Union(sets.StringKeySet(oldPLStates))
 				expectedPLNames = expectedPLNames.Union(sets.NewString(
 					fcv1a1.PriorityLevelConfigurationNameExempt,
 					fcv1a1.PriorityLevelConfigurationNameCatchAll))
 				if e, a := expectedPLNames, sets.StringKeySet(ctl.priorityLevelStates); !e.Equal(a) {
-					t.Errorf("e=%v, a=%v", e, a)
+					t.Errorf("Fail at %s: e=%v, a=%v", trialName, e, a)
 				}
 				if e, a := len(newGoodFSMap)+2-newMandBitsFS.count(), len(ctl.flowSchemas); e != a {
-					t.Errorf("e=%v, a=%v", e, a)
+					t.Errorf("Fail at %s: e=%v, a=%v", trialName, e, a)
 				}
 				for plName := range expectedPLNames {
 					plState := ctl.priorityLevelStates[plName]
-					checkNewPLState(t, plName, plState, oldGoodPLMap, newGoodPLMap)
+					checkNewPLState(t, trialName, plName, plState, oldPLStates, newGoodPLMap)
 				}
 				for _, fs := range ctl.flowSchemas {
-					checkNewFS(t, ctl, fs, newGoodFSMap, newFSDigestses[fs.Name])
+					checkNewFS(t, ctl, trialName, fs, newGoodFSMap, newFSDigestses[fs.Name])
 				}
 
 				j++
-				if j > 1 {
+				if j > 3 {
 					break
+				}
+
+				// Calculate expected survivors
+				oldPLStates = map[string]*priorityLevelState{}
+				for oldPLName, oldPLState := range ctl.priorityLevelStates {
+					if oldPLName == fcv1a1.PriorityLevelConfigurationNameExempt || oldPLName == fcv1a1.PriorityLevelConfigurationNameCatchAll || oldPLState.queues != nil && !(oldPLState.quiescing && oldPLState.queues.IsIdle()) {
+						oldState := *oldPLState
+						oldPLStates[oldPLName] = &oldState
+					}
 				}
 
 				// Now create a new config and digest it
 				trialName := fmt.Sprintf("trial%d-%d", i, j)
 				var newPLs []*fcv1a1.PriorityLevelConfiguration
 				var newFSs []*fcv1a1.FlowSchema
-				oldAllPLNames = expectedPLNames
 				newPLs, newGoodPLMap, newGoodPLNames, newBadPLNames = genPLs(rng, trialName, 1+rng.Intn(3))
 				newFSs, newGoodFSMap, newFSDigestses = genFSs(t, rng, trialName, newGoodPLNames, newBadPLNames, 1+rng.Intn(5))
 
@@ -95,51 +107,64 @@ func TestDigestConfig(t *testing.T) {
 				for _, newFS := range newFSs {
 					t.Logf("For %s, digesting newFS=%#+v", trialName, newFS)
 				}
-				ctl.digestConfigObjects(newPLs, newFSs)
 
+				ctl.digestConfigObjects(newPLs, newFSs)
 			}
 		})
 	}
 }
 
-func checkNewPLState(t *testing.T, plName string, plState *priorityLevelState, oldGoodPLMap, newGoodPLMap map[string]*fcv1a1.PriorityLevelConfiguration) {
+func checkNewPLState(t *testing.T, trialName, plName string, plState *priorityLevelState, oldPLStates map[string]*priorityLevelState, newGoodPLMap map[string]*fcv1a1.PriorityLevelConfiguration) {
+	var expectedSpec *fcv1a1.PriorityLevelConfigurationSpec
 	pl, inNew := newGoodPLMap[plName]
-	opl, _ := oldGoodPLMap[plName]
-	if pl == nil {
-		pl = opl
+	if inNew {
+		expectedSpec = &pl.Spec
+	}
+	ost, inOld := oldPLStates[plName]
+	if expectedSpec == nil && inOld {
+		expectedSpec = &ost.config
 	}
 	var isMand bool
 	for _, mpl := range fcboot.MandatoryPriorityLevelConfigurations {
 		if plName == mpl.Name {
 			isMand = true
-			if pl == nil {
-				pl = mpl
+			if expectedSpec == nil {
+				expectedSpec = &mpl.Spec
 			}
 		}
 	}
-	if pl == nil {
-		t.Errorf("Inexplicable entry %q %#+v", plName, plState)
+	if expectedSpec == nil {
+		t.Errorf("Fail at %s: Inexplicable entry %q %#+v", trialName, plName, plState)
 		return
 	}
-	if e, a := pl.Spec, plState.config; e != a {
-		t.Errorf("e=%#+v, a=%#+v", e, a)
+	if plState == nil {
+		t.Errorf("Fail at %s: missing new priorityLevelState for %s", trialName, plName)
+		return
 	}
-	isExempt := pl.Spec.Type == fcv1a1.PriorityLevelEnablementExempt
+	if e, a := *expectedSpec, plState.config; e != a {
+		t.Errorf("Fail at %s: e=%#+v, a=%#+v", trialName, e, a)
+	}
+	isExempt := expectedSpec.Type == fcv1a1.PriorityLevelEnablementExempt
 	if e, a := isExempt, (plState.qsCompleter == nil); e != a {
-		t.Errorf("e=%v, a=%v", e, a)
+		t.Errorf("Fail at %s: e=%v, a=%v", trialName, e, a)
 	}
 	if e, a := isExempt, (plState.queues == nil); e != a {
-		t.Errorf("e=%v, a=%v", e, a)
+		t.Errorf("Fail at %s: e=%v, a=%v", trialName, e, a)
+	}
+	if inOld {
+		if e, a := ost.queues, plState.queues; e != a {
+			t.Errorf("Fail at %s: e=%p, a=%p", trialName, e, a)
+		}
 	}
 	if e, a := !(inNew || isMand), plState.quiescing; e != a {
-		t.Errorf("e=%v, a=%v", e, a)
+		t.Errorf("Fail at %s: e=%v, a=%v", trialName, e, a)
 	}
 	if e, a := 0, plState.numPending; e != a {
-		t.Errorf("e=%v, a=%v", e, a)
+		t.Errorf("Fail at %s: e=%v, a=%v", trialName, e, a)
 	}
 }
 
-func checkNewFS(t *testing.T, ctl *configController, fs *fcv1a1.FlowSchema, newGoodFSMap map[string]*fcv1a1.FlowSchema, digests *flowSchemaDigests) {
+func checkNewFS(t *testing.T, ctl *configController, trialName string, fs *fcv1a1.FlowSchema, newGoodFSMap map[string]*fcv1a1.FlowSchema, digests *flowSchemaDigests) {
 	orig := newGoodFSMap[fs.Name]
 	for _, mfs := range fcboot.MandatoryFlowSchemas {
 		if fs.Name == mfs.Name {
@@ -149,11 +174,11 @@ func checkNewFS(t *testing.T, ctl *configController, fs *fcv1a1.FlowSchema, newG
 		}
 	}
 	if orig == nil {
-		t.Errorf("Inexplicable entry %#+v", *fs)
+		t.Errorf("Fail at %s: Inexplicable entry %#+v", trialName, *fs)
 		return
 	}
 	if e, a := orig.Spec, fs.Spec; !apiequality.Semantic.DeepEqual(e, a) {
-		t.Errorf("e=%s, a=%s", FmtFlowSchemaSpec(&e), FmtFlowSchemaSpec(&a))
+		t.Errorf("Fail at %s: e=%s, a=%s", trialName, fmtv1a1.FmtFlowSchemaSpec(&e), fmtv1a1.FmtFlowSchemaSpec(&a))
 	}
 	if digests != nil {
 		for _, rd := range digests.matches {
@@ -161,16 +186,16 @@ func checkNewFS(t *testing.T, ctl *configController, fs *fcv1a1.FlowSchema, newG
 			t.Logf("Considering FlowSchema %s, Match(%#+v) => %q, %#+v, %q, %v", fs.Name, rd, matchFSName, matchDistMethod, matchPLName, startFn)
 			if matchFSName == orig.Name {
 				if e, a := orig.Spec.DistinguisherMethod, matchDistMethod; !apiequality.Semantic.DeepEqual(e, a) {
-					t.Errorf("Got DistinguisherMethod %#+v for %s", a, FmtFlowSchema(orig))
+					t.Errorf("Fail at %s: Got DistinguisherMethod %#+v for %s", trialName, a, fmtv1a1.FmtFlowSchema(orig))
 				}
 				if e, a := orig.Spec.PriorityLevelConfiguration.Name, matchPLName; e != a {
-					t.Errorf("e=%v, a=%v", e, a)
+					t.Errorf("Fail at %s: e=%v, a=%v", trialName, e, a)
 				}
 			} else if matchFSName == fcv1a1.FlowSchemaNameCatchAll {
-				t.Errorf("Failed expected match for %#+v against %s", rd, FmtFlowSchema(orig))
+				t.Errorf("Fail at %s: Failed expected match for %#+v against %s", trialName, rd, fmtv1a1.FmtFlowSchema(orig))
 			}
 			if startFn != nil {
-				exec, after := startFn(context.Background(), 47, rd.RequestInfo, rd.User)
+				exec, after := startFn(context.Background(), 47)
 				t.Logf("startFn(..) => %v, %p", exec, after)
 				if exec {
 					after()
@@ -179,9 +204,17 @@ func checkNewFS(t *testing.T, ctl *configController, fs *fcv1a1.FlowSchema, newG
 			}
 		}
 		for _, rd := range digests.mismatches {
-			matchFSName, _, _, _ := ctl.Match(rd)
+			matchFSName, _, _, startFn := ctl.Match(rd)
 			if matchFSName == orig.Name {
-				t.Errorf("Digest %#+v unexpectedly matched schema %s", rd, FmtFlowSchema(fs))
+				t.Errorf("Fail at %s: Digest %#+v unexpectedly matched schema %s", trialName, rd, fmtv1a1.FmtFlowSchema(fs))
+			}
+			if startFn != nil {
+				exec, after := startFn(context.Background(), 74)
+				t.Logf("startFn(..) => %v, %p", exec, after)
+				if exec {
+					after()
+					t.Log("called after()")
+				}
 			}
 		}
 	}
@@ -206,6 +239,7 @@ func genPLs(rng *rand.Rand, trial string, n int) (pls []*fcv1a1.PriorityLevelCon
 			pls = append(pls, pl)
 		}
 	}
+	badNames.Insert(fmt.Sprintf("%s-%d", trial, n+1))
 	if n == 0 || rng.Float32() < 0.5 {
 		addGood(fcboot.MandatoryPriorityLevelConfigurationExempt)
 	}
