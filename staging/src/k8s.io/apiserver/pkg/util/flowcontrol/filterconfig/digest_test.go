@@ -26,58 +26,79 @@ import (
 
 	fcv1a1 "k8s.io/api/flowcontrol/v1alpha1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	fcboot "k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap"
-	fmtv1a1 "k8s.io/apiserver/pkg/apis/flowcontrol/v1alpha1"
+	fcfmt "k8s.io/apiserver/pkg/apis/flowcontrol/format"
 	"k8s.io/client-go/informers"
 	clientsetfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/klog"
 )
+
+type flowSchemaDigests struct {
+	matches    []RequestDigest
+	mismatches []RequestDigest
+}
 
 func TestMain(m *testing.M) {
 	klog.InitFlags(nil)
 	os.Exit(m.Run())
 }
 
+var mandPLs = func() map[string]*fcv1a1.PriorityLevelConfiguration {
+	ans := make(map[string]*fcv1a1.PriorityLevelConfiguration)
+	for _, mand := range fcboot.MandatoryPriorityLevelConfigurations {
+		ans[mand.Name] = mand
+	}
+	return ans
+}()
+
+var mandFSs = func() map[string]*fcv1a1.FlowSchema {
+	ans := make(map[string]*fcv1a1.FlowSchema)
+	for _, mand := range fcboot.MandatoryFlowSchemas {
+		ans[mand.Name] = mand
+	}
+	return ans
+}()
+
 func TestDigestConfig(t *testing.T) {
 	rngOuter := rand.New(rand.NewSource(1234567890123456789))
 	for i := 1; i <= 3; i++ {
 		rng := rand.New(rand.NewSource(int64(rngOuter.Uint64())))
-		clientset := clientsetfake.NewSimpleClientset()
-		informerFactory := informers.NewSharedInformerFactory(clientset, 0)
-		flowcontrolClient := clientset.FlowcontrolV1alpha1()
-		ctl := NewTestableController(
-			informerFactory,
-			flowcontrolClient,
-			100,         // server concurrency limit
-			time.Minute, // request wait limit
-			noRestraintQSF,
-		).(*configController)
 		t.Run(fmt.Sprintf("trial%d:", i), func(t *testing.T) {
+			clientset := clientsetfake.NewSimpleClientset()
+			informerFactory := informers.NewSharedInformerFactory(clientset, 0)
+			flowcontrolClient := clientset.FlowcontrolV1alpha1()
+			ctl := NewTestableController(
+				informerFactory,
+				flowcontrolClient,
+				100,         // server concurrency limit
+				time.Minute, // request wait limit
+				noRestraintQSF,
+			).(*configController)
 			oldPLStates := map[string]*priorityLevelState{}
 			trialName := fmt.Sprintf("trial%d-0", i)
-			_, newGoodPLMap, newGoodPLNames, newBadPLNames := genPLs(rng, trialName, 0)
+			_, newGoodPLMap, newGoodPLNames, newBadPLNames := genPLs(rng, trialName, sets.NewString(), 0)
 			_, newGoodFSMap, newFSDigestses := genFSs(t, rng, trialName, newGoodPLNames, newBadPLNames, 0)
 			for j := 0; ; {
+				t.Logf("For %s, newGoodPLNames=%#+v", trialName, newGoodPLNames)
+				t.Logf("For %s, newGoodFSMap=%#+v", trialName, newGoodFSMap)
 				// Check that the latest digestion did the right thing
-				newMandBitsFS := seekMandFSs(newGoodFSMap)
 				expectedPLNames := newGoodPLNames.Union(sets.StringKeySet(oldPLStates))
-				expectedPLNames = expectedPLNames.Union(sets.NewString(
-					fcv1a1.PriorityLevelConfigurationNameExempt,
-					fcv1a1.PriorityLevelConfigurationNameCatchAll))
+				expectedPLNames = expectedPLNames.Union(sets.StringKeySet(mandPLs))
 				if e, a := expectedPLNames, sets.StringKeySet(ctl.priorityLevelStates); !e.Equal(a) {
-					t.Errorf("Fail at %s: e=%v, a=%v", trialName, e, a)
-				}
-				if e, a := len(newGoodFSMap)+2-newMandBitsFS.count(), len(ctl.flowSchemas); e != a {
 					t.Errorf("Fail at %s: e=%v, a=%v", trialName, e, a)
 				}
 				for plName := range expectedPLNames {
 					plState := ctl.priorityLevelStates[plName]
 					checkNewPLState(t, trialName, plName, plState, oldPLStates, newGoodPLMap)
 				}
+				testFSNames := sets.StringKeySet(newGoodFSMap).Union(sets.StringKeySet(mandFSs))
 				for _, fs := range ctl.flowSchemas {
 					checkNewFS(t, ctl, trialName, fs, newGoodFSMap, newFSDigestses[fs.Name])
+					testFSNames.Delete(fs.Name)
+				}
+				if len(testFSNames) > 0 {
+					t.Errorf("Fail at %s: ctl did not retain FlowSchemas %#+v", trialName, testFSNames)
 				}
 
 				j++
@@ -86,26 +107,27 @@ func TestDigestConfig(t *testing.T) {
 				}
 
 				// Calculate expected survivors
-				oldPLStates = map[string]*priorityLevelState{}
+				nextPLStates := map[string]*priorityLevelState{}
 				for oldPLName, oldPLState := range ctl.priorityLevelStates {
-					if oldPLName == fcv1a1.PriorityLevelConfigurationNameExempt || oldPLName == fcv1a1.PriorityLevelConfigurationNameCatchAll || oldPLState.queues != nil && !(oldPLState.quiescing && oldPLState.queues.IsIdle()) {
+					if mandPLs[oldPLName] != nil || oldPLState.queues != nil && !(oldPLState.quiescing && oldPLState.queues.IsIdle()) {
 						oldState := *oldPLState
-						oldPLStates[oldPLName] = &oldState
+						nextPLStates[oldPLName] = &oldState
 					}
 				}
+				oldPLStates = nextPLStates
 
 				// Now create a new config and digest it
-				trialName := fmt.Sprintf("trial%d-%d", i, j)
+				trialName = fmt.Sprintf("trial%d-%d", i, j)
 				var newPLs []*fcv1a1.PriorityLevelConfiguration
 				var newFSs []*fcv1a1.FlowSchema
-				newPLs, newGoodPLMap, newGoodPLNames, newBadPLNames = genPLs(rng, trialName, 1+rng.Intn(3))
-				newFSs, newGoodFSMap, newFSDigestses = genFSs(t, rng, trialName, newGoodPLNames, newBadPLNames, 1+rng.Intn(5))
+				newPLs, newGoodPLMap, newGoodPLNames, newBadPLNames = genPLs(rng, trialName, expectedPLNames, 1+rng.Intn(4))
+				newFSs, newGoodFSMap, newFSDigestses = genFSs(t, rng, trialName, newGoodPLNames, newBadPLNames, 1+rng.Intn(6))
 
 				for _, newPL := range newPLs {
-					t.Logf("For %s, digesting newPL=%#+v", trialName, newPL)
+					t.Logf("For %s, digesting newPL=%#+v", trialName, fcfmt.Fmt(newPL))
 				}
 				for _, newFS := range newFSs {
-					t.Logf("For %s, digesting newFS=%#+v", trialName, newFS)
+					t.Logf("For %s, digesting newFS=%#+v", trialName, fcfmt.Fmt(newFS))
 				}
 
 				ctl.digestConfigObjects(newPLs, newFSs)
@@ -134,33 +156,33 @@ func checkNewPLState(t *testing.T, trialName, plName string, plState *priorityLe
 		}
 	}
 	if expectedSpec == nil {
-		t.Errorf("Fail at %s: Inexplicable entry %q %#+v", trialName, plName, plState)
+		t.Errorf("Fail at %s/%s: Inexplicable entry %#+v", trialName, plName, plState)
 		return
 	}
 	if plState == nil {
-		t.Errorf("Fail at %s: missing new priorityLevelState for %s", trialName, plName)
+		t.Errorf("Fail at %s/%s: missing new priorityLevelState", trialName, plName)
 		return
 	}
 	if e, a := *expectedSpec, plState.config; e != a {
-		t.Errorf("Fail at %s: e=%#+v, a=%#+v", trialName, e, a)
+		t.Errorf("Fail at %s/%s: e=%#+v, a=%#+v", trialName, plName, e, a)
 	}
 	isExempt := expectedSpec.Type == fcv1a1.PriorityLevelEnablementExempt
 	if e, a := isExempt, (plState.qsCompleter == nil); e != a {
-		t.Errorf("Fail at %s: e=%v, a=%v", trialName, e, a)
+		t.Errorf("Fail at %s/%s: e=%v, a=%v", trialName, plName, e, a)
 	}
 	if e, a := isExempt, (plState.queues == nil); e != a {
-		t.Errorf("Fail at %s: e=%v, a=%v", trialName, e, a)
+		t.Errorf("Fail at %s/%s: e=%v, a=%v", trialName, plName, e, a)
 	}
 	if inOld {
 		if e, a := ost.queues, plState.queues; e != a {
-			t.Errorf("Fail at %s: e=%p, a=%p", trialName, e, a)
+			t.Errorf("Fail at %s/%s: e=%p, a=%p", trialName, plName, e, a)
 		}
 	}
 	if e, a := !(inNew || isMand), plState.quiescing; e != a {
-		t.Errorf("Fail at %s: e=%v, a=%v", trialName, e, a)
+		t.Errorf("Fail at %s/%s: e=%v, a=%v", trialName, plName, e, a)
 	}
 	if e, a := 0, plState.numPending; e != a {
-		t.Errorf("Fail at %s: e=%v, a=%v", trialName, e, a)
+		t.Errorf("Fail at %s/%s: e=%v, a=%v", trialName, plName, e, a)
 	}
 }
 
@@ -178,7 +200,7 @@ func checkNewFS(t *testing.T, ctl *configController, trialName string, fs *fcv1a
 		return
 	}
 	if e, a := orig.Spec, fs.Spec; !apiequality.Semantic.DeepEqual(e, a) {
-		t.Errorf("Fail at %s: e=%s, a=%s", trialName, fmtv1a1.FmtFlowSchemaSpec(&e), fmtv1a1.FmtFlowSchemaSpec(&a))
+		t.Errorf("Fail at %s/%s: e=%#+v, a=%#+v", trialName, fs.Name, fcfmt.Fmt(e), fcfmt.Fmt(a))
 	}
 	if digests != nil {
 		for _, rd := range digests.matches {
@@ -186,13 +208,13 @@ func checkNewFS(t *testing.T, ctl *configController, trialName string, fs *fcv1a
 			t.Logf("Considering FlowSchema %s, Match(%#+v) => %q, %#+v, %q, %v", fs.Name, rd, matchFSName, matchDistMethod, matchPLName, startFn)
 			if matchFSName == orig.Name {
 				if e, a := orig.Spec.DistinguisherMethod, matchDistMethod; !apiequality.Semantic.DeepEqual(e, a) {
-					t.Errorf("Fail at %s: Got DistinguisherMethod %#+v for %s", trialName, a, fmtv1a1.FmtFlowSchema(orig))
+					t.Errorf("Fail at %s/%s: Got DistinguisherMethod %#+v for %#+v", trialName, fs.Name, a, fcfmt.Fmt(orig))
 				}
 				if e, a := orig.Spec.PriorityLevelConfiguration.Name, matchPLName; e != a {
-					t.Errorf("Fail at %s: e=%v, a=%v", trialName, e, a)
+					t.Errorf("Fail at %s/%s: e=%v, a=%v", trialName, fs.Name, e, a)
 				}
-			} else if matchFSName == fcv1a1.FlowSchemaNameCatchAll {
-				t.Errorf("Fail at %s: Failed expected match for %#+v against %s", trialName, rd, fmtv1a1.FmtFlowSchema(orig))
+			} else if matchFSName == fcv1a1.FlowSchemaNameCatchAll && fs.Spec.MatchingPrecedence < fcv1a1.FlowSchemaMaxMatchingPrecedence {
+				t.Errorf("Fail at %s/%s: Failed expected match for %#+v against %#+v", trialName, fs.Name, rd, fcfmt.Fmt(orig))
 			}
 			if startFn != nil {
 				exec, after := startFn(context.Background(), 47)
@@ -206,7 +228,7 @@ func checkNewFS(t *testing.T, ctl *configController, trialName string, fs *fcv1a
 		for _, rd := range digests.mismatches {
 			matchFSName, _, _, startFn := ctl.Match(rd)
 			if matchFSName == orig.Name {
-				t.Errorf("Fail at %s: Digest %#+v unexpectedly matched schema %s", trialName, rd, fmtv1a1.FmtFlowSchema(fs))
+				t.Errorf("Fail at %s/%s: Digest %#+v unexpectedly matched schema %#+v", trialName, fs.Name, rd, fcfmt.Fmt(fs))
 			}
 			if startFn != nil {
 				exec, after := startFn(context.Background(), 74)
@@ -220,7 +242,7 @@ func checkNewFS(t *testing.T, ctl *configController, trialName string, fs *fcv1a
 	}
 }
 
-func genPLs(rng *rand.Rand, trial string, n int) (pls []*fcv1a1.PriorityLevelConfiguration, goodPLs map[string]*fcv1a1.PriorityLevelConfiguration, goodNames, badNames sets.String) {
+func genPLs(rng *rand.Rand, trial string, oldPLNames sets.String, n int) (pls []*fcv1a1.PriorityLevelConfiguration, goodPLs map[string]*fcv1a1.PriorityLevelConfiguration, goodNames, badNames sets.String) {
 	pls = make([]*fcv1a1.PriorityLevelConfiguration, 0, n)
 	goodPLs = make(map[string]*fcv1a1.PriorityLevelConfiguration, n)
 	goodNames = sets.NewString()
@@ -231,7 +253,7 @@ func genPLs(rng *rand.Rand, trial string, n int) (pls []*fcv1a1.PriorityLevelCon
 		pls = append(pls, pl)
 	}
 	for i := 1; i <= n; i++ {
-		pl, valid := genPL(rng, fmt.Sprintf("%s-%d", trial, i))
+		pl, valid := genPL(rng, fmt.Sprintf("%s-pl%d", trial, i))
 		if valid {
 			addGood(pl)
 		} else {
@@ -239,12 +261,25 @@ func genPLs(rng *rand.Rand, trial string, n int) (pls []*fcv1a1.PriorityLevelCon
 			pls = append(pls, pl)
 		}
 	}
-	badNames.Insert(fmt.Sprintf("%s-%d", trial, n+1))
-	if n == 0 || rng.Float32() < 0.5 {
-		addGood(fcboot.MandatoryPriorityLevelConfigurationExempt)
+	for oldPLName := range oldPLNames {
+		if _, has := mandPLs[oldPLName]; has {
+			continue
+		}
+		if rng.Float32() < 0.67 {
+			pl, valid := genPL(rng, oldPLName)
+			if valid {
+				addGood(pl)
+			} else {
+				badNames.Insert(pl.Name)
+				pls = append(pls, pl)
+			}
+		}
 	}
-	if n == 0 || rng.Float32() < 0.5 {
-		addGood(fcboot.MandatoryPriorityLevelConfigurationCatchAll)
+	badNames.Insert(trial + "-nopl")
+	for _, pl := range mandPLs {
+		if n == 0 || rng.Float32() < 0.5 && !(goodNames.Has(pl.Name) || badNames.Has(pl.Name)) {
+			addGood(pl)
+		}
 	}
 	return
 }
@@ -262,7 +297,7 @@ func genFSs(t *testing.T, rng *rand.Rand, trial string, goodPLNames, badPLNames 
 		addGood(fcboot.MandatoryFlowSchemaCatchAll, nil, nil)
 	}
 	for i := 1; i <= n; i++ {
-		fs, valid, _, _, matches, mismatches := genFS(t, rng, fmt.Sprintf("%s-%d", trial, i), goodPLNames, badPLNames)
+		fs, valid, _, _, matches, mismatches := genFS(t, rng, fmt.Sprintf("%s-fs%d", trial, i), goodPLNames, badPLNames)
 		if valid {
 			addGood(fs, matches, mismatches)
 		} else {
@@ -273,33 +308,4 @@ func genFSs(t *testing.T, rng *rand.Rand, trial string, goodPLNames, badPLNames 
 		addGood(fcboot.MandatoryFlowSchemaExempt, nil, nil)
 	}
 	return
-}
-
-type mandBits struct{ exempt, catchAll bool }
-
-func (mb mandBits) count() int {
-	return btoi(mb.exempt) + btoi(mb.catchAll)
-}
-
-func seekMandFSs(fses map[string]*fcv1a1.FlowSchema) mandBits {
-	return mandBits{
-		exempt:   fses[fcv1a1.FlowSchemaNameExempt] != nil,
-		catchAll: fses[fcv1a1.FlowSchemaNameCatchAll] != nil,
-	}
-}
-
-type flowSchemaDigests struct {
-	matches    []RequestDigest
-	mismatches []RequestDigest
-}
-
-var _ *fcv1a1.FlowSchema = nil
-var _ *metav1.ObjectMeta = nil
-var _ = sets.NewString("x", "y")
-
-func btoi(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }

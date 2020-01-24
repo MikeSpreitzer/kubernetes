@@ -33,7 +33,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	fcboot "k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap"
-	fmtv1a1 "k8s.io/apiserver/pkg/apis/flowcontrol/v1alpha1"
+	fcfmt "k8s.io/apiserver/pkg/apis/flowcontrol/format"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/util/apihelpers"
@@ -394,17 +394,15 @@ func (meal *cfgMeal) digestNewPLsLocked(newPLs []*fctypesv1a1.PriorityLevelConfi
 	for _, pl := range newPLs {
 		state := meal.cfgCtl.priorityLevelStates[pl.Name]
 		if state == nil {
-			state = &priorityLevelState{
-				config: pl.Spec,
-			}
-		} else {
-			state.config = pl.Spec
+			state = &priorityLevelState{}
 		}
 		qsCompleter, err := qscOfPL(meal.cfgCtl.queueSetFactory, state.queues, pl.Name, &pl.Spec, meal.cfgCtl.requestWaitLimit)
 		if err != nil {
-			klog.Warningf("Ignoring PriorityLevelConfiguration object %s because its spec (%s) is broken: %s", pl.Name, fmtv1a1.FmtPriorityLevelConfigurationSpec(&pl.Spec), err.Error())
+			klog.Warningf("Ignoring PriorityLevelConfiguration object %s because its spec (%#+v) is broken: %s", pl.Name, fcfmt.Fmt(pl.Spec), err.Error())
 			continue
 		}
+		meal.newPLStates[pl.Name] = state
+		state.config = pl.Spec
 		state.qsCompleter = qsCompleter
 		if state.quiescing { // it was undesired, but no longer
 			klog.V(3).Infof("Priority level %q was undesired and has become desired again", pl.Name)
@@ -415,7 +413,6 @@ func (meal *cfgMeal) digestNewPLsLocked(newPLs []*fctypesv1a1.PriorityLevelConfi
 		}
 		meal.haveExemptPL = meal.haveExemptPL || pl.Name == fctypesv1a1.PriorityLevelConfigurationNameExempt
 		meal.haveCatchAllPL = meal.haveCatchAllPL || pl.Name == fctypesv1a1.PriorityLevelConfigurationNameCatchAll
-		meal.newPLStates[pl.Name] = state
 	}
 }
 
@@ -440,8 +437,6 @@ func (meal *cfgMeal) digestFlowSchemasLocked(newFSs []*fctypesv1a1.FlowSchema) {
 		if !goodPriorityRef {
 			klog.V(6).Infof("Ignoring FlowSchema %s because of bad priority level reference %q", fs.Name, fs.Spec.PriorityLevelConfiguration.Name)
 			continue
-		} else {
-			klog.V(6).Infof("Accpeting FlowSchema %#+v", fs)
 		}
 		fsSeq = append(fsSeq, newFSs[i])
 		meal.haveExemptFS = meal.haveExemptFS || fs.Name == fctypesv1a1.FlowSchemaNameExempt
@@ -461,7 +456,7 @@ func (meal *cfgMeal) digestFlowSchemasLocked(newFSs []*fctypesv1a1.FlowSchema) {
 	meal.cfgCtl.flowSchemas = fsSeq
 	if klog.V(5) {
 		for _, fs := range fsSeq {
-			klog.Infof("Using FlowSchema %s: %#+v", fs.Name, fs.Spec)
+			klog.Infof("Using %#+v", fcfmt.Fmt(fs))
 		}
 	}
 }
@@ -496,7 +491,7 @@ func (meal *cfgMeal) processOldPLsLocked() {
 		plState.qsCompleter, err = qscOfPL(meal.cfgCtl.queueSetFactory, plState.queues, plName, &plState.config, meal.cfgCtl.requestWaitLimit)
 		if err != nil {
 			// This can not happen because qscOfPL already approved this config
-			panic(err)
+			panic(fmt.Sprintf("%s from name=%q spec=%#+v", err.Error(), plName, fcfmt.Fmt(plState.config)))
 		}
 		if plState.config.Limited != nil {
 			meal.shareSum += float64(plState.config.Limited.AssuredConcurrencyShares)
@@ -521,9 +516,9 @@ func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 		metrics.UpdateSharedConcurrencyLimit(plName, concurrencyLimit)
 
 		if plState.queues == nil {
-			klog.V(5).Infof("Introducing queues for priority level %q: config=%#+v, concurrencyLimit=%d, quiescing=%v (shares=%v, shareSum=%v)", plName, plState.config, concurrencyLimit, plState.quiescing, plState.config.Limited.AssuredConcurrencyShares, meal.shareSum)
+			klog.V(5).Infof("Introducing queues for priority level %q: config=%#+v, concurrencyLimit=%d, quiescing=%v (shares=%v, shareSum=%v)", plName, fcfmt.Fmt(plState.config), concurrencyLimit, plState.quiescing, plState.config.Limited.AssuredConcurrencyShares, meal.shareSum)
 		} else {
-			klog.V(5).Infof("Retaining queues for priority level %q: config=%#+v, concurrencyLimit=%d, quiescing=%v, numPending=%d (shares=%v, shareSum=%v)", plName, plState.config, concurrencyLimit, plState.quiescing, plState.numPending, plState.config.Limited.AssuredConcurrencyShares, meal.shareSum)
+			klog.V(5).Infof("Retaining queues for priority level %q: config=%#+v, concurrencyLimit=%d, quiescing=%v, numPending=%d (shares=%v, shareSum=%v)", plName, fcfmt.Fmt(plState.config), concurrencyLimit, plState.quiescing, plState.numPending, plState.config.Limited.AssuredConcurrencyShares, meal.shareSum)
 		}
 		plState.queues = plState.qsCompleter.Complete(fq.DispatchingConfig{ConcurrencyLimit: concurrencyLimit})
 	}
@@ -535,6 +530,10 @@ func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 func qscOfPL(qsf fq.QueueSetFactory, queues fq.QueueSet, plName string, plSpec *fctypesv1a1.PriorityLevelConfigurationSpec, requestWaitLimit time.Duration) (fq.QueueSetCompleter, error) {
 	if (plSpec.Type == fctypesv1a1.PriorityLevelEnablementExempt) != (plSpec.Limited == nil) {
 		return nil, errors.New("broken union structure at the top")
+	}
+	if (plSpec.Type == fctypesv1a1.PriorityLevelEnablementExempt) != (plName == fctypesv1a1.PriorityLevelConfigurationNameExempt) {
+		// This package does not attempt to cope with a priority level dynamically switching between exempt and not.
+		return nil, errors.New("non-alignment between name and type")
 	}
 	if plSpec.Limited == nil {
 		return nil, nil

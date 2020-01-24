@@ -18,6 +18,8 @@ package filterconfig
 
 import (
 	"fmt"
+
+	fcfmt "k8s.io/apiserver/pkg/apis/flowcontrol/format"
 )
 
 var _ fmt.GoStringer = RequestDigest{}
@@ -25,4 +27,14 @@ var _ fmt.GoStringer = RequestDigest{}
 // GoString produces a golang source expression of the value.
 func (rd RequestDigest) GoString() string {
 	return fmt.Sprintf("RequestDigest{RequestInfo: %#+v, User: %#+v}", rd.RequestInfo, rd.User)
+}
+
+var _ fmt.GoStringer = (*priorityLevelState)(nil)
+
+// GoString produces a golang source expression of the value.
+func (pls *priorityLevelState) GoString() string {
+	if pls == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("&priorityLevelState{config:%#+v, qsCompleter:%#+v, queues:%#+v, quiescing:%#v, numPending:%d}", fcfmt.Fmt(pls.config), pls.qsCompleter, pls.queues, pls.quiescing, pls.numPending)
 }

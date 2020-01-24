@@ -114,7 +114,7 @@ func (impl *implementation) Wait(ctx context.Context, requestDigest fcfc.Request
 	hashValue := hashFlowID(fsName, flowDistinguisher)
 
 	// 4. queuing
-	execute, afterExecute := startFn(ctx, hashValue, requestDigest.RequestInfo, requestDigest.User)
+	execute, afterExecute := startFn(ctx, hashValue)
 
 	// 5. execute or reject
 	metrics.ObserveWaitingDuration(plName, fsName, strconv.FormatBool(execute), time.Now().Sub(startWaitingTime))
