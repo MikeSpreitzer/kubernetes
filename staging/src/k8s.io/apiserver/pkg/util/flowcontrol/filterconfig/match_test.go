@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/util/sets"
-	fcfmt "k8s.io/apiserver/pkg/apis/flowcontrol/format"
+	fcfmt "k8s.io/apiserver/pkg/util/flowcontrol/format"
 )
 
 func TestMatching(t *testing.T) {
@@ -30,7 +30,7 @@ func TestMatching(t *testing.T) {
 	goodPLNames := sets.NewString(genWords(rngOuter, true, "", 5)...)
 	badPLNames := sets.NewString(genWords(rngOuter, false, "", 5)...)
 	for i := 0; i < 1000; i++ {
-		rng := rand.New(rand.NewSource(rngOuter.Int63()))
+		rng := rand.New(rand.NewSource(int64(rngOuter.Uint64())))
 		t.Run(fmt.Sprintf("trial%d:", i), func(t *testing.T) {
 			fs, valid, _, _, matchingDigests, skippingDigests := genFS(t, rng, fmt.Sprintf("fs%d", i), goodPLNames, badPLNames)
 			if !valid {
@@ -56,7 +56,7 @@ func TestMatching(t *testing.T) {
 func TestPolicyRules(t *testing.T) {
 	rngOuter := rand.New(rand.NewSource(42))
 	for i := 0; i < 100; i++ {
-		rng := rand.New(rand.NewSource(rngOuter.Int63()))
+		rng := rand.New(rand.NewSource(int64(rngOuter.Uint64())))
 		t.Run(fmt.Sprintf("trial%d:", i), func(t *testing.T) {
 			r := rng.Float32()
 			n := rng.Float32()

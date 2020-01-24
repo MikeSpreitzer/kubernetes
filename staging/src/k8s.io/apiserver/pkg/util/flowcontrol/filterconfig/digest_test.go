@@ -28,7 +28,7 @@ import (
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/util/sets"
 	fcboot "k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap"
-	fcfmt "k8s.io/apiserver/pkg/apis/flowcontrol/format"
+	fcfmt "k8s.io/apiserver/pkg/util/flowcontrol/format"
 	"k8s.io/client-go/informers"
 	clientsetfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/klog"

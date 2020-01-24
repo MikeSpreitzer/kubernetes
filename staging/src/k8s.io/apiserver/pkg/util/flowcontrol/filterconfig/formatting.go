@@ -19,7 +19,7 @@ package filterconfig
 import (
 	"fmt"
 
-	fcfmt "k8s.io/apiserver/pkg/apis/flowcontrol/format"
+	fcfmt "k8s.io/apiserver/pkg/util/flowcontrol/format"
 )
 
 var _ fmt.GoStringer = RequestDigest{}

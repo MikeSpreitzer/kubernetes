@@ -34,6 +34,7 @@ filegroup(
         "//staging/src/k8s.io/apiserver/pkg/util/flowcontrol/counter:all-srcs",
         "//staging/src/k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing:all-srcs",
         "//staging/src/k8s.io/apiserver/pkg/util/flowcontrol/filterconfig:all-srcs",
+        "//staging/src/k8s.io/apiserver/pkg/util/flowcontrol/format:all-srcs",
         "//staging/src/k8s.io/apiserver/pkg/util/flowcontrol/metrics:all-srcs",
     ],
     tags = ["automanaged"],
