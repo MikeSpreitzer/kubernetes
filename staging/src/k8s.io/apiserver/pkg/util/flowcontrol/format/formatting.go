@@ -14,10 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package format
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 
 	fcv1a1 "k8s.io/api/flowcontrol/v1alpha1"
@@ -25,14 +26,18 @@ import (
 	"k8s.io/apiserver/pkg/endpoints/request"
 )
 
+// This file provides an easy way to mark a value for printing in full
+// detail IF it is printed but without costing a lot of CPU or memory
+// if the value is NOT printed.  The API Priority and Fairness API
+// objects are formatted into JSON.  The other types of objects here
+// are formatted into golang source.
+
 // Stringer marks the given value for custom formatting by this package.
-// This has the virtue of not making a string unless and until needed.
 type Stringer struct{ val interface{} }
 
 var _ fmt.GoStringer = Stringer{}
 
 // Fmt marks the given value for custom formatting by this package.
-// This has the virtue of not making a string unless and until needed.
 func Fmt(val interface{}) Stringer {
 	return Stringer{val}
 }
@@ -44,15 +49,27 @@ func (sr Stringer) GoString() string {
 	}
 	switch typed := sr.val.(type) {
 	case *fcv1a1.FlowSchema:
-		return FmtFlowSchema(typed)
-	case fcv1a1.FlowSchemaSpec:
-		return FmtFlowSchemaSpec(&typed)
+		return ToJSON(*typed)
+	case *fcv1a1.FlowDistinguisherMethod:
+		return ToJSON(*typed)
 	case *fcv1a1.PriorityLevelConfiguration:
-		return FmtPriorityLevelConfiguration(typed)
-	case fcv1a1.PriorityLevelConfigurationSpec:
-		return FmtPriorityLevelConfigurationSpec(&typed)
-	case fcv1a1.PolicyRulesWithSubjects:
-		return FmtPolicyRulesWithSubjects(typed)
+		return ToJSON(*typed)
+	case *fcv1a1.LimitedPriorityLevelConfiguration:
+		return ToJSON(*typed)
+	case *fcv1a1.QueuingConfiguration:
+		return ToJSON(*typed)
+	case fcv1a1.FlowSchema, fcv1a1.FlowSchemaSpec,
+		fcv1a1.FlowDistinguisherMethod,
+		fcv1a1.PolicyRulesWithSubjects,
+		fcv1a1.Subject,
+		fcv1a1.ResourcePolicyRule,
+		fcv1a1.NonResourcePolicyRule,
+		fcv1a1.PriorityLevelConfiguration,
+		fcv1a1.PriorityLevelConfigurationSpec,
+		fcv1a1.LimitedPriorityLevelConfiguration,
+		fcv1a1.LimitResponse,
+		fcv1a1.QueuingConfiguration:
+		return ToJSON(&sr.val)
 	case []user.Info:
 		return FmtUsers(typed)
 	case []*request.RequestInfo:
@@ -60,6 +77,17 @@ func (sr Stringer) GoString() string {
 	default:
 		return fmt.Sprintf("%#+v", sr.val)
 	}
+}
+
+// ToJSON converts using encoding/json and handles errors by
+// formatting them
+func ToJSON(val interface{}) string {
+	bs, err := json.Marshal(val)
+	str := string(bs)
+	if err != nil {
+		str = str + "<" + err.Error() + ">"
+	}
+	return str
 }
 
 // FmtPriorityLevelConfiguration returns a golang source expression

@@ -421,10 +421,18 @@ func (meal *cfgMeal) digestNewPLsLocked(newPLs []*fctypesv1a1.PriorityLevelConfi
 // use.  We do this before holding over old priority levels so that
 // requests stop going to those levels and FlowSchemaStatus values
 // reflect this.  This function also adds any missing mandatory
-// FlowSchema objects.
+// FlowSchema objects.  The given objects must all have disstinct
+// names.
 func (meal *cfgMeal) digestFlowSchemasLocked(newFSs []*fctypesv1a1.FlowSchema) {
 	fsSeq := make(apihelpers.FlowSchemaSequence, 0, len(newFSs))
+	fsMap := make(map[string]*fctypesv1a1.FlowSchema, len(newFSs))
 	for i, fs := range newFSs {
+		otherFS := fsMap[fs.Name]
+		if otherFS != nil {
+			// This client is forbidden to do this.
+			panic(fmt.Sprintf("Given two FlowSchema objects with the same name: %#+v and %#+v", fcfmt.Fmt(otherFS), fcfmt.Fmt(fs)))
+		}
+		fsMap[fs.Name] = fs
 		_, goodPriorityRef := meal.newPLStates[fs.Spec.PriorityLevelConfiguration.Name]
 
 		// Ensure the object's status reflects whether its priority
@@ -456,7 +464,7 @@ func (meal *cfgMeal) digestFlowSchemasLocked(newFSs []*fctypesv1a1.FlowSchema) {
 	meal.cfgCtl.flowSchemas = fsSeq
 	if klog.V(5) {
 		for _, fs := range fsSeq {
-			klog.Infof("Using %#+v", fcfmt.Fmt(fs))
+			klog.Infof("Using FlowSchema %#+v", fcfmt.Fmt(fs))
 		}
 	}
 }
@@ -652,9 +660,9 @@ func (cfgCtl *configController) Match(rd RequestDigest) (string, *fctypesv1a1.Fl
 				afterCalls := 0
 				return exec, func() {
 					afterCalls++
-					klog.V(7).Infof("For execID=%p, after() calls:=%d", execID, afterCalls)
+					klog.V(7).Infof("For matchID=%p, execID=%p, after() calls:=%d", matchID, execID, afterCalls)
 					if afterCalls > 1 {
-						panic(fmt.Sprintf("Match(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, matchID=%p afterCalls:=%d", rd, fs.Name, fs.Spec.DistinguisherMethod, plName, matchID, afterCalls))
+						panic(fmt.Sprintf("Match(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, matchID=%p, execID=%p, afterCalls:=%d", rd, fs.Name, fs.Spec.DistinguisherMethod, plName, matchID, execID, afterCalls))
 					}
 					idle3 := afterExec()
 					if idle3 {
