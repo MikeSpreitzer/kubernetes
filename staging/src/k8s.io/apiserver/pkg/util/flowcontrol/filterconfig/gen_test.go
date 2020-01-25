@@ -43,18 +43,18 @@ func genPL(rng *rand.Rand, name string) (*fcv1a1.PriorityLevelConfiguration, boo
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: fcv1a1.PriorityLevelConfigurationSpec{
 			Type: fcv1a1.PriorityLevelEnablementExempt}}
-	if rng.Float32() < 0.9 {
+	if rng.Float32() < 0.98 {
 		plc.Spec.Type = fcv1a1.PriorityLevelEnablementLimited
 	}
-	if rng.Float32() < 0.9 {
+	if (plc.Spec.Type == fcv1a1.PriorityLevelEnablementLimited) == (rng.Float32() < 0.95) {
 		plc.Spec.Limited = &fcv1a1.LimitedPriorityLevelConfiguration{
 			AssuredConcurrencyShares: rng.Int31n(100) - 5,
 			LimitResponse: fcv1a1.LimitResponse{
 				Type: fcv1a1.LimitResponseTypeReject}}
-		if rng.Float32() < 0.9 {
+		if rng.Float32() < 0.95 {
 			plc.Spec.Limited.LimitResponse.Type = fcv1a1.LimitResponseTypeQueue
 		}
-		if rng.Float32() < 0.9 {
+		if (plc.Spec.Limited.LimitResponse.Type == fcv1a1.LimitResponseTypeQueue) == (rng.Float32() < 0.98) {
 			qc := &fcv1a1.QueuingConfiguration{
 				Queues:           rng.Int31n(256) - 25,
 				HandSize:         rng.Int31n(96) - 16,

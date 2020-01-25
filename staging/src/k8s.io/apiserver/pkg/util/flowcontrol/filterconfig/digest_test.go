@@ -62,7 +62,7 @@ var mandFSs = func() map[string]*fcv1a1.FlowSchema {
 
 func TestDigestConfig(t *testing.T) {
 	rngOuter := rand.New(rand.NewSource(1234567890123456789))
-	for i := 1; i <= 3; i++ {
+	for i := 1; i <= 10; i++ {
 		rng := rand.New(rand.NewSource(int64(rngOuter.Uint64())))
 		t.Run(fmt.Sprintf("trial%d:", i), func(t *testing.T) {
 			clientset := clientsetfake.NewSimpleClientset()
@@ -102,7 +102,7 @@ func TestDigestConfig(t *testing.T) {
 				}
 
 				j++
-				if j > 3 {
+				if j > 10 {
 					break
 				}
 
