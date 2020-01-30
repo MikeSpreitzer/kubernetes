@@ -117,6 +117,27 @@ func NewWriteMultiple(lock sync.Locker, activeCounter counter.GoRoutineCounter) 
 	}}
 }
 
+func (wr *writeMultiple) Wait(cond func(interface{}) (bool, error)) error {
+	wr.lock.Lock()
+	defer wr.lock.Unlock()
+	return wr.WaitLocked(cond)
+}
+
+func (wr *writeMultiple) WaitLocked(cond func(interface{}) (bool, error)) error {
+	for {
+		if wr.isSet {
+			pass, err := cond(wr.value)
+			if pass || err != nil {
+				return err
+			}
+		}
+		wr.waitingCount++
+		wr.activeCounter.Add(-1)
+		wr.cond.Wait()
+	}
+	return nil
+}
+
 func (wr *writeMultiple) Set(value interface{}) {
 	wr.lock.Lock()
 	defer wr.lock.Unlock()

@@ -54,6 +54,28 @@ type LockingReadable interface {
 	IsSetLocked() bool
 }
 
+// Waitable is a mixin for Readable that adds the ability to wait for
+// the variable to have a value that passes a given predicate.
+type Waitable interface {
+	// Wait returns after the variable is set and the given function,
+	// applied to the variable's value, returns true.  Wait also
+	// returns the error if the function ever returns a non-nil error.
+	Wait(func(interface{}) (bool, error)) error
+}
+
+// LockingWaitable is a Waitable whose implementation is protected by
+// a lock.
+type LockingWaitable interface {
+	Waitable
+
+	// WaitLocked is like Wait but the caller must already hold the
+	// lock.  WaitLocked may release, and later re-acquire, the lock
+	// any number of times.  Wait may acquire, and later release, the
+	// lock any number of times.  The predicate function is invoked
+	// while the lock is held.
+	WaitLocked(func(interface{}) (bool, error)) error
+}
+
 // WriteOnceOnly represents a variable that is initially not set and
 // can be set once.
 type WriteOnceOnly interface {
@@ -106,6 +128,7 @@ type WriteMultipleOnly interface {
 // can be written only once) and is readable.
 type WriteMultiple interface {
 	Readable
+	Waitable
 	WriteMultipleOnly
 }
 
@@ -125,5 +148,6 @@ type LockingWriteMultipleOnly interface {
 // protected by a lock.
 type LockingWriteMultiple interface {
 	LockingReadable
+	LockingWaitable
 	LockingWriteMultipleOnly
 }
