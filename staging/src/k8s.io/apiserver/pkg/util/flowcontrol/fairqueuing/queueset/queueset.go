@@ -296,11 +296,19 @@ func (qs *queueSet) StartRequest(ctx context.Context, hashValue uint64, descr1, 
 	return req, false
 }
 
-func (req *request) Wait() (bool, bool, func() (idle bool)) {
+func (req *request) Finish(execFn func()) bool {
+	exec, idle := req.wait()
+	if !exec {
+		return idle
+	}
+	execFn()
+	return req.qs.finishRequestAndDispatchAsMuchAsPossible(req)
+}
+
+func (req *request) wait() (bool, bool) {
 	qs := req.qs
 	qs.lock.Lock()
 	defer qs.lock.Unlock()
-
 	if req.waitStarted {
 		// This can not happen, because the client is forbidden to
 		// call Wait twice on the same request
@@ -322,15 +330,14 @@ func (req *request) Wait() (bool, bool, func() (idle bool)) {
 	case decisionReject:
 		klog.V(5).Infof("QS(%s): request %#+v %#+v timed out after being enqueued\n", qs.qCfg.Name, req.descr1, req.descr2)
 		metrics.AddReject(qs.qCfg.Name, "time-out")
-		return false, qs.isIdleLocked(), qs.IsIdle
+		return false, qs.isIdleLocked()
 	case decisionCancel:
 		// TODO(aaron-prindle) add metrics for this case
 		klog.V(5).Infof("QS(%s): Ejecting request %#+v %#+v from its queue", qs.qCfg.Name, req.descr1, req.descr2)
-		return false, qs.isIdleLocked(), qs.IsIdle
+		return false, qs.isIdleLocked()
 	case decisionExecute:
-		return true, false, func() bool {
-			return qs.finishRequestAndDispatchAsMuchAsPossible(req)
-		}
+		klog.V(5).Infof("QS(%s): Dispatching request %#+v %#+v from its queue", qs.qCfg.Name, req.descr1, req.descr2)
+		return true, false
 	default:
 		// This can not happen, all possible values are handled above
 		panic(decision)

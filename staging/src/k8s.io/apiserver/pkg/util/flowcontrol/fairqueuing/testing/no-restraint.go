@@ -57,6 +57,7 @@ func (noRestraint) StartRequest(ctx context.Context, hashValue uint64, descr1, d
 	return noRestraintRequest{}, false
 }
 
-func (noRestraintRequest) Wait() (execute, idle bool, afterExecution func() bool) {
-	return true, false, func() bool { return false }
+func (noRestraintRequest) Finish(execute func()) (idle bool) {
+	execute()
+	return false
 }

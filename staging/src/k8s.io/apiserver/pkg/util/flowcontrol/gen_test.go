@@ -14,11 +14,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package filterconfig
+package flowcontrol
 
 import (
 	"fmt"
 	"math/rand"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,9 +53,9 @@ func genPL(rng *rand.Rand, name string) *fcv1a1.PriorityLevelConfiguration {
 		plc.Spec.Limited.LimitResponse.Queuing = &fcv1a1.QueuingConfiguration{
 			Queues:           hs + rng.Int31n(20),
 			HandSize:         hs,
-			QueueLengthLimit: rng.Int31n(20) + 1}
+			QueueLengthLimit: 5}
 	}
-	_, err := qscOfPL(noRestraintQSF, nil, name, &plc.Spec, time.Minute)
+	_, err := qscOfPL(noRestraintQSF, nil, plc, time.Minute)
 	if err != nil {
 		panic(err)
 	}
@@ -390,6 +391,15 @@ func shuffleAndTakeDigests(t *testing.T, rng *rand.Rand, rule *fcv1a1.PolicyRule
 		}
 	}
 	return ans
+}
+
+var uCounter uint32 = 1
+
+func uniqify(in RequestDigest) RequestDigest {
+	u1 := in.User.(*user.DefaultInfo)
+	u2 := *u1
+	u2.Extra = map[string][]string{"u": {fmt.Sprintf("z%d", atomic.AddUint32(&uCounter, 1))}}
+	return RequestDigest{User: &u2, RequestInfo: in.RequestInfo}
 }
 
 // genSubject returns a randomly generated valid Subject that matches

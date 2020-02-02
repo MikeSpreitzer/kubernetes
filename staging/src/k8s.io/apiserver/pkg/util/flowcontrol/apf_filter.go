@@ -35,7 +35,6 @@ import (
 	"k8s.io/apiserver/pkg/util/flowcontrol/counter"
 	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
 	fqs "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/queueset"
-	fcfc "k8s.io/apiserver/pkg/util/flowcontrol/filterconfig"
 	"k8s.io/apiserver/pkg/util/flowcontrol/metrics"
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/klog"
@@ -46,12 +45,17 @@ import (
 
 // Interface defines how the API Priority and Fairness filter interacts with the underlying system.
 type Interface interface {
-	// Wait decides what to do about the request with the given digest
-	// and, if appropriate, enqueues that request and waits for it to be
-	// dequeued before returning.  If `execute == false` then the request
-	// is being rejected.  If `execute == true` then the caller should
-	// handle the request and then call `afterExecute()`.
-	Wait(ctx context.Context, requestDigest fcfc.RequestDigest) (execute bool, afterExecute func())
+	// Handle takes care of queuing and dispatching a request
+	// characterized by the given digest.  The given `noteFn` will be
+	// invoked with the results of request classification.  If Handle
+	// decides that the request should be executed then `execute()`
+	// will be invoked once to execute the request; otherwise
+	// `execute()` will not be invoked.
+	Handle(ctx context.Context,
+		requestDigest RequestDigest,
+		noteFn func(fs *fctypesv1a1.FlowSchema, pl *fctypesv1a1.PriorityLevelConfiguration),
+		execFn func(),
+	)
 
 	// Run monitors config objects from the main apiservers and causes
 	// any needed changes to local behavior.  This method ceases
@@ -60,10 +64,6 @@ type Interface interface {
 }
 
 // This request filter implements https://github.com/kubernetes/enhancements/blob/master/keps/sig-api-machinery/20190228-priority-and-fairness.md
-
-type implementation struct {
-	ctl fcfc.Controller
-}
 
 // New creates a new instance to implement API priority and fairness
 func New(
@@ -90,51 +90,54 @@ func NewTestable(
 	requestWaitLimit time.Duration,
 	queueSetFactory fq.QueueSetFactory,
 ) Interface {
-	return &implementation{ctl: fcfc.NewTestableController(informerFactory, flowcontrolClient, serverConcurrencyLimit, requestWaitLimit, queueSetFactory)}
+	return newTestableController(informerFactory, flowcontrolClient, serverConcurrencyLimit, requestWaitLimit, queueSetFactory)
 }
 
-func (impl *implementation) Run(stopCh <-chan struct{}) error {
-	return impl.ctl.Run(stopCh)
-}
-
-func (impl *implementation) Wait(ctx context.Context, requestDigest fcfc.RequestDigest) (bool, func()) {
-	startWaitingTime := time.Now()
-
-	// 1. classify the request
-	fsName, distinguisherMethod, plName, startFn := impl.ctl.Match(requestDigest)
-
-	// 2. early out for exempt
-	if startFn == nil {
-		klog.V(7).Infof("Serving requestInfo=%#+v, userInfo=%#+v, fs=%s, pl=%s without delay", requestDigest.RequestInfo, requestDigest.User, fsName, plName)
-		startExecutionTime := time.Now()
-		return true, func() {
-			metrics.ObserveExecutionDuration(plName, fsName, time.Now().Sub(startExecutionTime))
+func (cfgCtl *configController) Handle(ctx context.Context, requestDigest RequestDigest,
+	noteFn func(fs *fctypesv1a1.FlowSchema, pl *fctypesv1a1.PriorityLevelConfiguration),
+	execFn func()) {
+	var queued bool
+	var startWaitingTime time.Time
+	hashFn := func(fsName string, distinguisherMethod *fctypesv1a1.FlowDistinguisherMethod) uint64 {
+		flowDistinguisher := computeFlowDistinguisher(requestDigest, distinguisherMethod)
+		hash := hashFlowID(fsName, flowDistinguisher)
+		return hash
+	}
+	preQueueFn := func() {
+		queued = true
+		startWaitingTime = time.Now()
+	}
+	fs, pl, isExempt, req := cfgCtl.startRequest(ctx, requestDigest, hashFn, preQueueFn)
+	noteFn(fs, pl)
+	if req == nil {
+		if queued {
+			metrics.ObserveWaitingDuration(pl.Name, fs.Name, strconv.FormatBool(req != nil), time.Now().Sub(startWaitingTime))
 		}
+		klog.V(7).Infof("Handle(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, isExempt=%v, reject", requestDigest, fs.Name, fs.Spec.DistinguisherMethod, pl.Name, isExempt)
+		return
 	}
-
-	// 3. computing hash
-	flowDistinguisher := computeFlowDistinguisher(requestDigest, distinguisherMethod)
-	hashValue := hashFlowID(fsName, flowDistinguisher)
-
-	// 4. queuing
-	execute, afterExecute := startFn(ctx, hashValue)
-
-	// 5. execute or reject
-	metrics.ObserveWaitingDuration(plName, fsName, strconv.FormatBool(execute), time.Now().Sub(startWaitingTime))
-	if !execute {
-		klog.V(7).Infof("Rejecting requestInfo=%#+v, userInfo=%#+v, fs=%s, pl=%s after fair queuing", requestDigest.RequestInfo, requestDigest.User, fsName, plName)
-		return false, func() {}
+	klog.V(7).Infof("Handle(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, isExempt=%v, queued=%v", requestDigest, fs.Name, fs.Spec.DistinguisherMethod, pl.Name, isExempt, queued)
+	var executed bool
+	idle3 := req.Finish(func() {
+		if queued {
+			metrics.ObserveWaitingDuration(pl.Name, fs.Name, strconv.FormatBool(req != nil), time.Now().Sub(startWaitingTime))
+		}
+		executed = true
+		startExecutionTime := time.Now()
+		execFn()
+		metrics.ObserveExecutionDuration(pl.Name, fs.Name, time.Now().Sub(startExecutionTime))
+	})
+	if queued && !executed {
+		metrics.ObserveWaitingDuration(pl.Name, fs.Name, strconv.FormatBool(req != nil), time.Now().Sub(startWaitingTime))
 	}
-	klog.V(7).Infof("Serving requestInfo=%#+v, userInfo=%#+v, fs=%s, pl=%s after fair queuing", requestDigest.RequestInfo, requestDigest.User, fsName, plName)
-	startExecutionTime := time.Now()
-	return execute, func() {
-		metrics.ObserveExecutionDuration(plName, fsName, time.Now().Sub(startExecutionTime))
-		afterExecute()
+	klog.V(7).Infof("Handle(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, isExempt=%v, queued=%v, Finish() => idle=%v", requestDigest, fs.Name, fs.Spec.DistinguisherMethod, pl.Name, isExempt, queued, idle3)
+	if idle3 {
+		cfgCtl.maybeReap(pl.Name)
 	}
 }
 
 // computeFlowDistinguisher extracts the flow distinguisher according to the given method
-func computeFlowDistinguisher(rd fcfc.RequestDigest, method *fctypesv1a1.FlowDistinguisherMethod) string {
+func computeFlowDistinguisher(rd RequestDigest, method *fctypesv1a1.FlowDistinguisherMethod) string {
 	if method == nil {
 		return ""
 	}

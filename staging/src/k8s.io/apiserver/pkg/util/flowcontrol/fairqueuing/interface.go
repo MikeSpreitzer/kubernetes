@@ -59,37 +59,34 @@ type QueueSet interface {
 
 	// IsIdle returns a bool indicating whether the QueueSet was idle
 	// at the moment of the return.  Idle means the QueueSet has zero
-	// requests queued and zero executing.
+	// requests queued and zero executing.  This bit can change only
+	// (1) during a call to StartRequest and (2) during a call to
+	// Request::Finish.  In the latter case idleness can only change
+	// from false to true.
 	IsIdle() bool
 
 	// StartRequest begins the process of handling a request.  If the
-	// request gets queued then Wait uses the given hashValue as the
-	// source of entropy as it shuffle-shards the request into a
-	// queue.  The descr1 and descr2 values play no role in the logic
-	// but appear in log messages.  This method always returns quickly
-	// (without waiting for the request to be dequeued).  If this
-	// method returns a nil Request value then caller should reject
-	// the request and the returned bool indicates whether the
-	// QueueSet was idle at the moment of the return.  Otherwise
-	// idle==false and the client must call the Wait method of the
-	// Request exactly once.
+	// request gets queued and the number of queues is greater than
+	// 1 then Wait uses the given hashValue as the source of entropy
+	// as it shuffle-shards the request into a queue.  The descr1 and
+	// descr2 values play no role in the logic but appear in log
+	// messages.  This method always returns quickly (without waiting
+	// for the request to be dequeued).  If this method returns a nil
+	// Request value then caller should reject the request and the
+	// returned bool indicates whether the QueueSet was idle at the
+	// moment of the return.  Otherwise idle==false and the client
+	// must call the Wait method of the Request exactly once.
 	StartRequest(ctx context.Context, hashValue uint64, descr1, descr2 interface{}) (req Request, idle bool)
 }
 
 // Request represents the remainder of the handling of one request
 type Request interface {
-	// Wait returns once the QueueSet has determined that it is time
-	// to execute or reject the request.  Canceling the context while
-	// the request is waiting in its queue will cut short that wait;
-	// later cancelations are the caller's problem.  If
-	// `execute==false` then the caller should reject the request and
-	// `idle` indicates whether the QueueSet was idle at the moment of
-	// the return; `afterExecution` is irrelevant in this case.
-	// Otherwise idle==false and the caller should execute the request
-	// and then call `afterExecution()` --- which always returns
-	// quickly, with a bool indicating whether the QueueSet was idle
-	// at the moment of the return.
-	Wait() (execute, idle bool, afterExecution func() (idle bool))
+	// Finish determines whether to execute or reject the request and
+	// invokes `execute` if the decision is to execute the request.
+	// The returned `idle bool` value indicates whether the QueueSet
+	// was idle when the value was calculated, but might no longer be
+	// accurate by the time the client examines that value.
+	Finish(execute func()) (idle bool)
 }
 
 // QueuingConfig defines the configuration of the queuing aspect of a QueueSet.

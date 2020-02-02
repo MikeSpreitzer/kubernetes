@@ -26,10 +26,10 @@ import (
 
 	// "k8s.io/apiserver/pkg/endpoints/metrics"
 
+	fcv1a1 "k8s.io/api/flowcontrol/v1alpha1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
 	utilflowcontrol "k8s.io/apiserver/pkg/util/flowcontrol"
-	utilfilterconfig "k8s.io/apiserver/pkg/util/flowcontrol/filterconfig"
 	"k8s.io/klog"
 )
 
@@ -57,7 +57,6 @@ func WithPriorityAndFairness(
 			handleError(w, r, fmt.Errorf("no User found in context"))
 			return
 		}
-		requestDigest := utilfilterconfig.RequestDigest{requestInfo, user}
 
 		// Skip tracking long running requests.
 		if longRunningRequestCheck != nil && longRunningRequestCheck(r, requestInfo) {
@@ -66,57 +65,63 @@ func WithPriorityAndFairness(
 			return
 		}
 
-		execute, afterExecute := fcIfc.Wait(ctx, requestDigest)
-		if !execute {
+		note := func(fs *fcv1a1.FlowSchema, pl *fcv1a1.PriorityLevelConfiguration) {
+		}
+		var served bool
+		execute := func() {
+			served = true
+			// Serve the request, but asynchronously, and return from here
+			// as soon as either the request is finished or the context is
+			// canceled.  The logic here is heavily cribbed from the
+			// timeout filter.
+			timedOut := ctx.Done()
+
+			// gets sent to exactly once, with the result of recover()
+			// for serving the request
+			resultCh := make(chan interface{})
+
+			go func() { // serve the request, with recovery from panics
+				defer func() {
+					err := recover()
+					if err != nil && err != http.ErrAbortHandler {
+						// Same as stdlib http server code. Manually allocate stack
+						// trace buffer size to prevent excessively large logs
+						const size = 64 << 10
+						buf := make([]byte, size)
+						buf = buf[:runtime.Stack(buf, false)]
+						err = fmt.Sprintf("%v\n%s", err, buf)
+					}
+					resultCh <- err
+				}()
+				handler.ServeHTTP(w, r)
+			}()
+
+			select {
+			case err := <-resultCh:
+				if err != nil {
+					panic(err)
+				}
+			case <-timedOut:
+				// Satisfy the need for a receive from resultCh
+				go func() {
+					err := <-resultCh
+					if err != nil {
+						switch t := err.(type) {
+						case error:
+							utilruntime.HandleError(t)
+						default:
+							utilruntime.HandleError(fmt.Errorf("%v", err))
+						}
+					}
+				}()
+				klog.V(6).Infof("Timed out waiting for RequestInfo=%#+v, user.Info=%#+v to finish\n", requestInfo, user)
+			}
+		}
+		fcIfc.Handle(ctx, utilflowcontrol.RequestDigest{requestInfo, user}, note, execute)
+		if !served {
 			tooManyRequests(r, w)
 			return
 		}
-		defer afterExecute()
 
-		// Serve the request, but asynchronously, and return from here
-		// as soon as either the request is finished or the context is
-		// canceled.  The logic here is heavily cribbed from the
-		// timeout filter.
-		timedOut := ctx.Done()
-
-		// gets sent to exactly once, with the result of recover() for serving the request
-		resultCh := make(chan interface{})
-
-		go func() { // serve the request, with recovery from panics
-			defer func() {
-				err := recover()
-				if err != nil && err != http.ErrAbortHandler {
-					// Same as stdlib http server code. Manually allocate stack
-					// trace buffer size to prevent excessively large logs
-					const size = 64 << 10
-					buf := make([]byte, size)
-					buf = buf[:runtime.Stack(buf, false)]
-					err = fmt.Sprintf("%v\n%s", err, buf)
-				}
-				resultCh <- err
-			}()
-			handler.ServeHTTP(w, r)
-		}()
-
-		select {
-		case err := <-resultCh:
-			if err != nil {
-				panic(err)
-			}
-		case <-timedOut:
-			// Satisfy the need for a receive from resultCh
-			go func() {
-				err := <-resultCh
-				if err != nil {
-					switch t := err.(type) {
-					case error:
-						utilruntime.HandleError(t)
-					default:
-						utilruntime.HandleError(fmt.Errorf("%v", err))
-					}
-				}
-			}()
-			klog.V(6).Infof("Timed out waiting for RequestInfo=%#+v, user.Info=%#+v to finish\n", requestInfo, user)
-		}
 	})
 }

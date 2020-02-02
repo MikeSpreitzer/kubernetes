@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package filterconfig
+package flowcontrol
 
 import (
 	"context"
@@ -22,7 +22,6 @@ import (
 	"math"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -30,16 +29,13 @@ import (
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/util/clock"
 	apierrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	fcboot "k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/util/apihelpers"
-	"k8s.io/apiserver/pkg/util/flowcontrol/counter"
 	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
-	fqs "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/queueset"
 	fcfmt "k8s.io/apiserver/pkg/util/flowcontrol/format"
 	"k8s.io/apiserver/pkg/util/flowcontrol/metrics"
 	kubeinformers "k8s.io/client-go/informers"
@@ -66,21 +62,6 @@ import (
 // name.
 const tracerName = "tracer.kube-system"
 
-// Controller maintains eventual consistency with the API objects that
-// configure API Priority and Fairness, and provides a procedural
-// interface to the configured behavior.
-type Controller interface {
-	// Run runs the controller, returning after it is stopped
-	Run(stopCh <-chan struct{}) error
-
-	// Match classifies the given request to the proper FlowSchema and
-	// returns the relevant features of that schema and its associated
-	// priority level.  If `startFn==nil` then the caller should
-	// immediately execute the request.  Otherwise the caller must
-	// call startFn exactly once and do as it says.
-	Match(RequestDigest) (flowSchemaName string, distinguisherMethod *fctypesv1a1.FlowDistinguisherMethod, priorityLevelName string, startFn StartFunction)
-}
-
 // StartFunction begins the process of handlig a request.  If the
 // request gets queued then this function uses the given hashValue as
 // the source of entropy as it shuffle-shards the request into a
@@ -98,9 +79,11 @@ type RequestDigest struct {
 	User        user.Info
 }
 
-// `*configController` implements Controller.  The methods of this
-// type and cfgMeal follow the convention that the suffix "Locked"
-// means that the caller must hold the configController lock.
+// `*configController` maintains eventual consistency with the API
+// objects that configure API Priority and Fairness, and provides a
+// procedural interface to the configured behavior.  The methods of
+// this type and cfgMeal follow the convention that the suffix
+// "Locked" means that the caller must hold the configController lock.
 type configController struct {
 	queueSetFactory fq.QueueSetFactory
 
@@ -149,9 +132,9 @@ type configController struct {
 
 // priorityLevelState holds the state specific to a priority level.
 type priorityLevelState struct {
-	// config holds the configuration after defaulting logic has been applied.
-	// If there are queues then their parameters are here.
-	config fctypesv1a1.PriorityLevelConfigurationSpec
+	// the API object or prototype prescribing this level.  Nothing
+	// reached through this pointer is mutable.
+	pl *fctypesv1a1.PriorityLevelConfiguration
 
 	// qsCompleter holds the QueueSetCompleter derived from `config`
 	// and `queues` if config is not exempt, nil otherwise.
@@ -171,33 +154,14 @@ type priorityLevelState struct {
 	numPending int
 }
 
-var _ Controller = (*configController)(nil)
-
-// NewController constructs a new Controller
-func NewController(
-	informerFactory kubeinformers.SharedInformerFactory,
-	flowcontrolClient fcclientv1a1.FlowcontrolV1alpha1Interface,
-	serverConcurrencyLimit int,
-	requestWaitLimit time.Duration,
-) Controller {
-	grc := counter.NoOp{}
-	return NewTestableController(
-		informerFactory,
-		flowcontrolClient,
-		serverConcurrencyLimit,
-		requestWaitLimit,
-		fqs.NewQueueSetFactory(&clock.RealClock{}, grc),
-	)
-}
-
 // NewTestableController is extra flexible to facilitate testing
-func NewTestableController(
+func newTestableController(
 	informerFactory kubeinformers.SharedInformerFactory,
 	flowcontrolClient fcclientv1a1.FlowcontrolV1alpha1Interface,
 	serverConcurrencyLimit int,
 	requestWaitLimit time.Duration,
 	queueSetFactory fq.QueueSetFactory,
-) Controller {
+) *configController {
 	cfgCtl := &configController{
 		queueSetFactory:        queueSetFactory,
 		serverConcurrencyLimit: serverConcurrencyLimit,
@@ -420,20 +384,20 @@ func (meal *cfgMeal) digestNewPLsLocked(newPLs []*fctypesv1a1.PriorityLevelConfi
 		if state == nil {
 			state = &priorityLevelState{}
 		}
-		qsCompleter, err := qscOfPL(meal.cfgCtl.queueSetFactory, state.queues, pl.Name, &pl.Spec, meal.cfgCtl.requestWaitLimit)
+		qsCompleter, err := qscOfPL(meal.cfgCtl.queueSetFactory, state.queues, pl, meal.cfgCtl.requestWaitLimit)
 		if err != nil {
 			klog.Warningf("Ignoring PriorityLevelConfiguration object %s because its spec (%#+v) is broken: %s", pl.Name, fcfmt.Fmt(pl.Spec), err.Error())
 			continue
 		}
 		meal.newPLStates[pl.Name] = state
-		state.config = pl.Spec
+		state.pl = pl
 		state.qsCompleter = qsCompleter
 		if state.quiescing { // it was undesired, but no longer
 			klog.V(3).Infof("Priority level %q was undesired and has become desired again", pl.Name)
 			state.quiescing = false
 		}
-		if state.config.Limited != nil {
-			meal.shareSum += float64(state.config.Limited.AssuredConcurrencyShares)
+		if state.pl.Spec.Limited != nil {
+			meal.shareSum += float64(state.pl.Spec.Limited.AssuredConcurrencyShares)
 		}
 		meal.haveExemptPL = meal.haveExemptPL || pl.Name == fctypesv1a1.PriorityLevelConfigurationNameExempt
 		meal.haveCatchAllPL = meal.haveCatchAllPL || pl.Name == fctypesv1a1.PriorityLevelConfigurationNameCatchAll
@@ -514,7 +478,7 @@ func (meal *cfgMeal) processOldPLsLocked() {
 				// Either there are no queues or they are done
 				// draining and no use is coming from another
 				// goroutine
-				klog.V(3).Infof("Removing undesired priority level %q, Type=%v", plName, plState.config.Type)
+				klog.V(3).Infof("Removing undesired priority level %q (nilQueues=%v), Type=%v", plName, plState.queues == nil, plState.pl.Spec.Type)
 				continue
 			}
 			if !plState.quiescing {
@@ -523,13 +487,13 @@ func (meal *cfgMeal) processOldPLsLocked() {
 			}
 		}
 		var err error
-		plState.qsCompleter, err = qscOfPL(meal.cfgCtl.queueSetFactory, plState.queues, plName, &plState.config, meal.cfgCtl.requestWaitLimit)
+		plState.qsCompleter, err = qscOfPL(meal.cfgCtl.queueSetFactory, plState.queues, plState.pl, meal.cfgCtl.requestWaitLimit)
 		if err != nil {
 			// This can not happen because qscOfPL already approved this config
-			panic(fmt.Sprintf("%s from name=%q spec=%#+v", err.Error(), plName, fcfmt.Fmt(plState.config)))
+			panic(fmt.Sprintf("%s from name=%q spec=%#+v", err.Error(), plName, fcfmt.Fmt(plState.pl.Spec)))
 		}
-		if plState.config.Limited != nil {
-			meal.shareSum += float64(plState.config.Limited.AssuredConcurrencyShares)
+		if plState.pl.Spec.Limited != nil {
+			meal.shareSum += float64(plState.pl.Spec.Limited.AssuredConcurrencyShares)
 		}
 		meal.haveExemptPL = meal.haveExemptPL || plName == fctypesv1a1.PriorityLevelConfigurationNameExempt
 		meal.haveCatchAllPL = meal.haveCatchAllPL || plName == fctypesv1a1.PriorityLevelConfigurationNameCatchAll
@@ -542,7 +506,7 @@ func (meal *cfgMeal) processOldPLsLocked() {
 // QueueSets.
 func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 	for plName, plState := range meal.newPLStates {
-		if plState.config.Limited == nil {
+		if plState.pl.Spec.Limited == nil {
 			klog.V(5).Infof("Using exempt priority level %q: quiescing=%v", plName, plState.quiescing)
 			continue
 		}
@@ -550,13 +514,13 @@ func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 		// The use of math.Ceil here means that the results might sum
 		// to a little more than serverConcurrencyLimit but the
 		// difference will be negligible.
-		concurrencyLimit := int(math.Ceil(float64(meal.cfgCtl.serverConcurrencyLimit) * float64(plState.config.Limited.AssuredConcurrencyShares) / meal.shareSum))
+		concurrencyLimit := int(math.Ceil(float64(meal.cfgCtl.serverConcurrencyLimit) * float64(plState.pl.Spec.Limited.AssuredConcurrencyShares) / meal.shareSum))
 		metrics.UpdateSharedConcurrencyLimit(plName, concurrencyLimit)
 
 		if plState.queues == nil {
-			klog.V(5).Infof("Introducing queues for priority level %q: config=%#+v, concurrencyLimit=%d, quiescing=%v (shares=%v, shareSum=%v)", plName, fcfmt.Fmt(plState.config), concurrencyLimit, plState.quiescing, plState.config.Limited.AssuredConcurrencyShares, meal.shareSum)
+			klog.V(5).Infof("Introducing queues for priority level %q: config=%#+v, concurrencyLimit=%d, quiescing=%v (shares=%v, shareSum=%v)", plName, fcfmt.Fmt(plState.pl.Spec), concurrencyLimit, plState.quiescing, plState.pl.Spec.Limited.AssuredConcurrencyShares, meal.shareSum)
 		} else {
-			klog.V(5).Infof("Retaining queues for priority level %q: config=%#+v, concurrencyLimit=%d, quiescing=%v, numPending=%d (shares=%v, shareSum=%v)", plName, fcfmt.Fmt(plState.config), concurrencyLimit, plState.quiescing, plState.numPending, plState.config.Limited.AssuredConcurrencyShares, meal.shareSum)
+			klog.V(5).Infof("Retaining queues for priority level %q: config=%#+v, concurrencyLimit=%d, quiescing=%v, numPending=%d (shares=%v, shareSum=%v)", plName, fcfmt.Fmt(plState.pl.Spec), concurrencyLimit, plState.quiescing, plState.numPending, plState.pl.Spec.Limited.AssuredConcurrencyShares, meal.shareSum)
 		}
 		plState.queues = plState.qsCompleter.Complete(fq.DispatchingConfig{ConcurrencyLimit: concurrencyLimit})
 	}
@@ -565,24 +529,24 @@ func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 // qscOfPL returns a pointer to an appropriate QueuingConfig or nil
 // if no limiting is called for.  Returns nil and an error if the given
 // object is malformed in a way that is a problem for this package.
-func qscOfPL(qsf fq.QueueSetFactory, queues fq.QueueSet, plName string, plSpec *fctypesv1a1.PriorityLevelConfigurationSpec, requestWaitLimit time.Duration) (fq.QueueSetCompleter, error) {
-	if (plSpec.Type == fctypesv1a1.PriorityLevelEnablementExempt) != (plSpec.Limited == nil) {
+func qscOfPL(qsf fq.QueueSetFactory, queues fq.QueueSet, pl *fctypesv1a1.PriorityLevelConfiguration, requestWaitLimit time.Duration) (fq.QueueSetCompleter, error) {
+	if (pl.Spec.Type == fctypesv1a1.PriorityLevelEnablementExempt) != (pl.Spec.Limited == nil) {
 		return nil, errors.New("broken union structure at the top")
 	}
-	if (plSpec.Type == fctypesv1a1.PriorityLevelEnablementExempt) != (plName == fctypesv1a1.PriorityLevelConfigurationNameExempt) {
+	if (pl.Spec.Type == fctypesv1a1.PriorityLevelEnablementExempt) != (pl.Name == fctypesv1a1.PriorityLevelConfigurationNameExempt) {
 		// This package does not attempt to cope with a priority level dynamically switching between exempt and not.
 		return nil, errors.New("non-alignment between name and type")
 	}
-	if plSpec.Limited == nil {
+	if pl.Spec.Limited == nil {
 		return nil, nil
 	}
-	if (plSpec.Limited.LimitResponse.Type == fctypesv1a1.LimitResponseTypeReject) != (plSpec.Limited.LimitResponse.Queuing == nil) {
+	if (pl.Spec.Limited.LimitResponse.Type == fctypesv1a1.LimitResponseTypeReject) != (pl.Spec.Limited.LimitResponse.Queuing == nil) {
 		return nil, errors.New("broken union structure for limit response")
 	}
-	qcAPI := plSpec.Limited.LimitResponse.Queuing
-	qcQS := fq.QueuingConfig{Name: plName}
+	qcAPI := pl.Spec.Limited.LimitResponse.Queuing
+	qcQS := fq.QueuingConfig{Name: pl.Name}
 	if qcAPI != nil {
-		qcQS = fq.QueuingConfig{Name: plName,
+		qcQS = fq.QueuingConfig{Name: pl.Name,
 			DesiredNumQueues: int(qcAPI.Queues),
 			QueueLengthLimit: int(qcAPI.QueueLengthLimit),
 			HandSize:         int(qcAPI.HandSize),
@@ -597,7 +561,7 @@ func qscOfPL(qsf fq.QueueSetFactory, queues fq.QueueSet, plName string, plSpec *
 		qsc, err = qsf.BeginConstruction(qcQS)
 	}
 	if err != nil {
-		err = errors.Wrap(err, fmt.Sprintf("priority level %q has QueuingConfiguration %#+v, which is invalid", plName, *qcAPI))
+		err = errors.Wrap(err, fmt.Sprintf("priority level %q has QueuingConfiguration %#+v, which is invalid", pl.Name, *qcAPI))
 	}
 	return qsc, err
 }
@@ -628,15 +592,15 @@ func (meal *cfgMeal) presyncFlowSchemaStatus(fs *fctypesv1a1.FlowSchema, isDangl
 
 // imaginePL adds a priority level based on one of the mandatory ones
 func (meal *cfgMeal) imaginePL(proto *fctypesv1a1.PriorityLevelConfiguration, requestWaitLimit time.Duration) {
-	klog.Warningf("No %s PriorityLevelConfiguration found, imagining one", proto.Name)
-	qsCompleter, err := qscOfPL(meal.cfgCtl.queueSetFactory, nil, proto.Name, &proto.Spec, requestWaitLimit)
+	klog.V(3).Infof("No %s PriorityLevelConfiguration found, imagining one", proto.Name)
+	qsCompleter, err := qscOfPL(meal.cfgCtl.queueSetFactory, nil, proto, requestWaitLimit)
 	if err != nil {
 		// This can not happen because proto is one of the mandatory
 		// objects and these are not erroneous
 		panic(err)
 	}
 	meal.newPLStates[proto.Name] = &priorityLevelState{
-		config:      proto.Spec,
+		pl:          proto,
 		qsCompleter: qsCompleter,
 	}
 	if proto.Spec.Limited != nil {
@@ -645,71 +609,62 @@ func (meal *cfgMeal) imaginePL(proto *fctypesv1a1.PriorityLevelConfiguration, re
 	return
 }
 
-func (cfgCtl *configController) Match(rd RequestDigest) (string, *fctypesv1a1.FlowDistinguisherMethod, string, StartFunction) {
+type immediateRequest struct{}
+
+func (immediateRequest) Finish(execute func()) bool {
+	execute()
+	return false
+}
+
+// startRequest classifies and, if appropriate, enqueues the request.
+// Returns a nil Request if and only if the request is to be rejected.
+// The returned bool indicates whether the request is exempt from
+// limitation.  The hashFn and preQueueFn must not make any
+// synchronous calls on this controller.
+func (cfgCtl *configController) startRequest(ctx context.Context,
+	rd RequestDigest,
+	hashFn func(fsName string, distinguisherMethod *fctypesv1a1.FlowDistinguisherMethod) uint64,
+	preQueueFn func(),
+) (*fctypesv1a1.FlowSchema, *fctypesv1a1.PriorityLevelConfiguration, bool, fq.Request) {
+	klog.V(7).Infof("startRequest(%#+v)", rd)
 	cfgCtl.lock.Lock()
 	defer cfgCtl.lock.Unlock()
-	var fs *fctypesv1a1.FlowSchema
-	for _, fs = range cfgCtl.flowSchemas {
+	for _, fs := range cfgCtl.flowSchemas {
 		if matchesFlowSchema(rd, fs) {
 			plName := fs.Spec.PriorityLevelConfiguration.Name
 			plState := cfgCtl.priorityLevelStates[plName]
-			if plState.config.Type == fctypesv1a1.PriorityLevelEnablementExempt {
-				klog.V(7).Infof("Match(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, immediate", rd, fs.Name, fs.Spec.DistinguisherMethod, plName)
-				return fs.Name, fs.Spec.DistinguisherMethod, plName, nil
+			if plState.pl.Spec.Type == fctypesv1a1.PriorityLevelEnablementExempt {
+				klog.V(7).Infof("startRequest(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, immediate", rd, fs.Name, fs.Spec.DistinguisherMethod, plName)
+				return fs, plState.pl, true, immediateRequest{}
 			}
-			plState.numPending++
-			matchID := &plName
-			klog.V(7).Infof("Match(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, matchID=%p", rd, fs.Name, fs.Spec.DistinguisherMethod, plName, matchID)
-			var startCalls int32
-			startFn := func(ctx context.Context, hashValue uint64) (execute bool, afterExecution func()) {
-				newStarts := atomic.AddInt32(&startCalls, 1)
-				klog.V(7).Infof("For matchID=%p, startFn(ctx, %v) startCalls:=%d", matchID, hashValue, newStarts)
-				if newStarts > 1 {
-					panic(fmt.Sprintf("Match(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, matchID=%p startCalls:=%d", rd, fs.Name, fs.Spec.DistinguisherMethod, plName, matchID, newStarts))
-				}
-				req := func() fq.Request {
-					cfgCtl.lock.Lock()
-					defer cfgCtl.lock.Unlock()
-					plState.numPending--
-					req, idle1 := plState.queues.StartRequest(ctx, hashValue, rd.RequestInfo, rd.User)
-					if idle1 {
-						cfgCtl.maybeReapLocked(plName, plState)
-					}
-					return req
-				}()
-				if req == nil {
-					klog.V(7).Infof("For matchID=%p, startFn(ctx, %v): reject", matchID, hashValue)
-					return false, func() {}
-				}
-				exec, idle2, afterExec := req.Wait()
-				execID := &exec
-				if idle2 {
-					cfgCtl.maybeReap(plName)
-				}
-				klog.V(7).Infof("For matchID=%p, startFn(..) => exec=%v, execID=%p", matchID, exec, execID)
-				var afterCalls int32
-				return exec, func() {
-					newAfter := atomic.AddInt32(&afterCalls, 1)
-					klog.V(7).Infof("For matchID=%p, execID=%p, after() calls:=%d", matchID, execID, newAfter)
-					if newAfter > 1 {
-						panic(fmt.Sprintf("Match(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, matchID=%p, execID=%p, afterCalls:=%d", rd, fs.Name, fs.Spec.DistinguisherMethod, plName, matchID, execID, newAfter))
-					}
-					idle3 := afterExec()
-					if idle3 {
-						cfgCtl.maybeReap(plName)
-					}
-				}
+			var numQueues int32
+			if plState.pl.Spec.Limited.LimitResponse.Type == fctypesv1a1.LimitResponseTypeQueue {
+				numQueues = plState.pl.Spec.Limited.LimitResponse.Queuing.Queues
+
 			}
-			return fs.Name, fs.Spec.DistinguisherMethod, plName, startFn
+			var hashValue uint64
+			if numQueues > 1 {
+				hashValue = hashFn(fs.Name, fs.Spec.DistinguisherMethod)
+			}
+			preQueueFn()
+			klog.V(7).Infof("startRequest(%#+v) => fsName=%q, distMethod=%#+v, plName=%q, numQueues=%d", rd, fs.Name, fs.Spec.DistinguisherMethod, plName, numQueues)
+			req, idle1 := plState.queues.StartRequest(ctx, hashValue, rd.RequestInfo, rd.User)
+			if idle1 {
+				cfgCtl.maybeReapLocked(plName, plState)
+			}
+			return fs, plState.pl, false, req
 		}
 	}
-	var lastFS *fctypesv1a1.FlowSchema
-	if len(cfgCtl.flowSchemas) > 0 {
-		lastFS = cfgCtl.flowSchemas[len(cfgCtl.flowSchemas)-1]
-	}
 	// This can never happen because every configState has a
-	// FlowSchema that matches everything.
-	panic(fmt.Sprintf("No match; rd=%#+v, lastFS=%#+v", rd, fcfmt.Fmt(lastFS)))
+	// FlowSchema that matches everything.  If somehow control reaches
+	// here, panic with some relevant information.
+	var catchAll *fctypesv1a1.FlowSchema
+	for _, fs := range cfgCtl.flowSchemas {
+		if fs.Name == fctypesv1a1.FlowSchemaNameCatchAll {
+			catchAll = fs
+		}
+	}
+	panic(fmt.Sprintf("No match; rd=%#+v, catchAll=%#+v", rd, fcfmt.Fmt(catchAll)))
 }
 
 // Call this after getting a clue that the given priority level is undesired and idle
@@ -717,10 +672,19 @@ func (cfgCtl *configController) maybeReap(plName string) {
 	cfgCtl.lock.Lock()
 	defer cfgCtl.lock.Unlock()
 	plState := cfgCtl.priorityLevelStates[plName]
-	if plState != nil && (plState.queues == nil || plState.quiescing && plState.numPending == 0 && plState.queues.IsIdle()) {
-		klog.V(3).Infof("Triggered API Priority and Fairness config reload because priority level %s became idle", plName)
-		cfgCtl.configQueue.Add(0)
+	if plState == nil {
+		klog.V(7).Infof("plName=%s, plState==nil", plName)
+		return
 	}
+	if plState.queues != nil {
+		useless := plState.quiescing && plState.numPending == 0 && plState.queues.IsIdle()
+		klog.V(7).Infof("plState.quiescing=%v, plState.numPending=%d, useless=%v", plState.quiescing, plState.numPending, useless)
+		if !useless {
+			return
+		}
+	}
+	klog.V(3).Infof("Removing undesired priority level %q, Type=%v", plName, plState.pl.Spec.Type)
+	delete(cfgCtl.priorityLevelStates, plName)
 }
 
 // Call this if both (1) plState.queues is non-nil and reported being
@@ -729,8 +693,8 @@ func (cfgCtl *configController) maybeReapLocked(plName string, plState *priority
 	if !(plState.quiescing && plState.numPending == 0) {
 		return
 	}
-	klog.V(3).Infof("Triggered API Priority and Fairness config reload because priority level %s became idle", plName)
-	cfgCtl.configQueue.Add(0)
+	klog.V(3).Infof("Removing undesired priority level %q, Type=%v", plName, plState.pl.Spec.Type)
+	delete(cfgCtl.priorityLevelStates, plName)
 }
 
 func (cfgCtl *configController) setTracedValueLocked(val int32) {

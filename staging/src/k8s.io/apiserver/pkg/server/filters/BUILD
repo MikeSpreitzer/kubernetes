@@ -45,6 +45,7 @@ go_library(
     importpath = "k8s.io/apiserver/pkg/server/filters",
     deps = [
         "//staging/src/k8s.io/api/core/v1:go_default_library",
+        "//staging/src/k8s.io/api/flowcontrol/v1alpha1:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/api/errors:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/runtime:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/util/runtime:go_default_library",
@@ -57,7 +58,6 @@ go_library(
         "//staging/src/k8s.io/apiserver/pkg/endpoints/request:go_default_library",
         "//staging/src/k8s.io/apiserver/pkg/server/httplog:go_default_library",
         "//staging/src/k8s.io/apiserver/pkg/util/flowcontrol:go_default_library",
-        "//staging/src/k8s.io/apiserver/pkg/util/flowcontrol/filterconfig:go_default_library",
         "//staging/src/k8s.io/client-go/kubernetes/scheme:go_default_library",
         "//vendor/k8s.io/klog:go_default_library",
     ],

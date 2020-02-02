@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package filterconfig
+package flowcontrol
 
 import (
 	"context"
@@ -52,69 +52,152 @@ var mandPLs = func() map[string]*fcv1a1.PriorityLevelConfiguration {
 }()
 
 type ctlTestState struct {
-	t           *testing.T
-	cfgCtl      *configController
-	fcIfc       fcclient.FlowcontrolV1alpha1Interface
-	existingPLs map[string]*fcv1a1.PriorityLevelConfiguration
-	existingFSs map[string]*fcv1a1.FlowSchema
-	tracer      *fcv1a1.FlowSchema
-	lock        sync.Mutex
-	queues      map[string]*ctlTestQueueSet
+	t               *testing.T
+	cfgCtl          *configController
+	fcIfc           fcclient.FlowcontrolV1alpha1Interface
+	existingPLs     map[string]*fcv1a1.PriorityLevelConfiguration
+	existingFSs     map[string]*fcv1a1.FlowSchema
+	heldRequestsMap map[string][]heldRequest
+	requestWG       sync.WaitGroup
+	tracer          *fcv1a1.FlowSchema
+	lock            sync.Mutex
+	queues          map[string]*ctlTestQueueSet
+}
+
+type heldRequest struct {
+	rd       RequestDigest
+	finishCh chan struct{}
 }
 
 var _ fq.QueueSetFactory = (*ctlTestState)(nil)
 
 type ctlTestQueueSetCompleter struct {
 	cts *ctlTestState
+	cqs *ctlTestQueueSet
 	qc  fq.QueuingConfig
 }
 
 type ctlTestQueueSet struct {
-	cts *ctlTestState
-	qc  fq.QueuingConfig
-	dc  fq.DispatchingConfig
+	cts         *ctlTestState
+	qc          fq.QueuingConfig
+	dc          fq.DispatchingConfig
+	countActive int
 }
 
 type ctlTestRequest struct {
-	cts            *ctlTestState
+	cqs            *ctlTestQueueSet
 	qsName         string
 	descr1, descr2 interface{}
 }
 
 func (cts *ctlTestState) BeginConstruction(qc fq.QueuingConfig) (fq.QueueSetCompleter, error) {
-	return ctlTestQueueSetCompleter{cts, qc}, nil
+	return ctlTestQueueSetCompleter{cts, nil, qc}, nil
 }
 
 func (cqs *ctlTestQueueSet) BeginConfigChange(qc fq.QueuingConfig) (fq.QueueSetCompleter, error) {
-	return ctlTestQueueSetCompleter{cqs.cts, qc}, nil
+	return ctlTestQueueSetCompleter{cqs.cts, cqs, qc}, nil
 }
 
 func (cqc ctlTestQueueSetCompleter) Complete(dc fq.DispatchingConfig) fq.QueueSet {
 	cqc.cts.lock.Lock()
 	defer cqc.cts.lock.Unlock()
-	qs := &ctlTestQueueSet{cqc.cts, cqc.qc, dc}
-	cqc.cts.queues[cqc.qc.Name] = qs
+	qs := cqc.cqs
+	if qs == nil {
+		qs = &ctlTestQueueSet{cts: cqc.cts, qc: cqc.qc, dc: dc}
+		cqc.cts.queues[cqc.qc.Name] = qs
+	} else {
+		qs.qc, qs.dc = cqc.qc, dc
+	}
 	return qs
 }
 
 func (cqs *ctlTestQueueSet) IsIdle() bool {
-	return false
+	cqs.cts.lock.Lock()
+	defer cqs.cts.lock.Unlock()
+	klog.V(7).Infof("For %p QS %s, countActive==%d", cqs, cqs.qc.Name, cqs.countActive)
+	return cqs.countActive == 0
 }
 
 func (cqs *ctlTestQueueSet) StartRequest(ctx context.Context, hashValue uint64, descr1, descr2 interface{}) (req fq.Request, idle bool) {
-	return &ctlTestRequest{cqs.cts, cqs.qc.Name, descr1, descr2}, false
+	cqs.cts.lock.Lock()
+	defer cqs.cts.lock.Unlock()
+	cqs.countActive++
+	cqs.cts.t.Logf("Queued %#+v %#+v for %p QS=%s, countActive:=%d", descr1, descr2, cqs, cqs.qc.Name, cqs.countActive)
+	return &ctlTestRequest{cqs, cqs.qc.Name, descr1, descr2}, false
 }
 
-func (ctr *ctlTestRequest) Wait() (execute, idle bool, afterExecution func() (idle bool)) {
-	return true, false, func() (idle bool) { return false }
+func (ctr *ctlTestRequest) Finish(execute func()) bool {
+	execute()
+	ctr.cqs.cts.lock.Lock()
+	defer ctr.cqs.cts.lock.Unlock()
+	ctr.cqs.countActive--
+	ctr.cqs.cts.t.Logf("Finished %#+v %#+v for %p QS=%s, countActive:=%d", ctr.descr1, ctr.descr2, ctr.cqs, ctr.cqs.qc.Name, ctr.cqs.countActive)
+	return ctr.cqs.countActive == 0
+}
+
+func (cts *ctlTestState) getQueueSetNames() sets.String {
+	cts.lock.Lock()
+	defer cts.lock.Unlock()
+	return sets.StringKeySet(cts.queues)
+}
+
+func (cts *ctlTestState) getNonIdleQueueSetNames() sets.String {
+	cts.lock.Lock()
+	defer cts.lock.Unlock()
+	ans := sets.NewString()
+	for name, qs := range cts.queues {
+		if qs.countActive > 0 {
+			ans.Insert(name)
+		}
+	}
+	return ans
 }
 
 func (cts *ctlTestState) hasNonIdleQueueSet(name string) bool {
 	cts.lock.Lock()
 	defer cts.lock.Unlock()
 	qs := cts.queues[name]
-	return qs != nil
+	return qs != nil && qs.countActive > 0
 }
+
+func (cts *ctlTestState) addHeldRequest(plName string, rd RequestDigest, finishCh chan struct{}) {
+	cts.lock.Lock()
+	defer cts.lock.Unlock()
+	hrs := cts.heldRequestsMap[plName]
+	hrs = append(hrs, heldRequest{rd, finishCh})
+	cts.heldRequestsMap[plName] = hrs
+	cts.t.Logf("Holding %#+v for %s, count:=%d", rd, plName, len(hrs))
+}
+
+func (cts *ctlTestState) popHeldRequest() (plName string, hr *heldRequest, nCount int) {
+	cts.lock.Lock()
+	defer cts.lock.Unlock()
+	var hrs []heldRequest
+	for {
+		for plName, hrs = range cts.heldRequestsMap {
+			goto GotOne
+		}
+		return "", nil, 0
+	GotOne:
+		if nhr := len(hrs); nhr > 0 {
+			hrv := hrs[nhr-1]
+			hrs = hrs[:nhr-1]
+			hr = &hrv
+		}
+		if len(hrs) == 0 {
+			delete(cts.heldRequestsMap, plName)
+		} else {
+			cts.heldRequestsMap[plName] = hrs
+		}
+		if hr != nil {
+			nCount = len(hrs)
+			return
+		}
+	}
+}
+
+var mandQueueSetNames = sets.NewString(fcv1a1.PriorityLevelConfigurationNameCatchAll)
+var exclQueueSetNames = sets.NewString(fcv1a1.PriorityLevelConfigurationNameExempt)
 
 func TestConfigConsumer(t *testing.T) {
 	rngOuter := rand.New(rand.NewSource(1234567890123456789))
@@ -125,34 +208,59 @@ func TestConfigConsumer(t *testing.T) {
 			informerFactory := informers.NewSharedInformerFactory(clientset, 0)
 			flowcontrolClient := clientset.FlowcontrolV1alpha1()
 			cts := &ctlTestState{t: t,
-				fcIfc:       flowcontrolClient,
-				existingFSs: map[string]*fcv1a1.FlowSchema{},
-				existingPLs: map[string]*fcv1a1.PriorityLevelConfiguration{},
-				queues:      map[string]*ctlTestQueueSet{},
+				fcIfc:           flowcontrolClient,
+				existingFSs:     map[string]*fcv1a1.FlowSchema{},
+				existingPLs:     map[string]*fcv1a1.PriorityLevelConfiguration{},
+				heldRequestsMap: map[string][]heldRequest{},
+				queues:          map[string]*ctlTestQueueSet{},
 			}
-			ctl := NewTestableController(
+			ctl := newTestableController(
 				informerFactory,
 				flowcontrolClient,
 				100,         // server concurrency limit
 				time.Minute, // request wait limit
 				cts,
-			).(*configController)
+			)
 			cts.cfgCtl = ctl
 			stopCh := make(chan struct{})
 			// informerFactory.Start(stopCh)
 			go informerFactory.Flowcontrol().V1alpha1().FlowSchemas().Informer().Run(stopCh)
 			go informerFactory.Flowcontrol().V1alpha1().PriorityLevelConfigurations().Informer().Run(stopCh)
 			go ctl.Run(stopCh)
-			oldPLNames := sets.NewString()
+			persistingPLNames := sets.NewString()
 			trialStep := fmt.Sprintf("trial%d-0", i)
-			_, _, newGoodPLNames, newBadPLNames := genPLs(rng, trialStep, oldPLNames, 0)
-			_, _, newFTRs, newCatchAlls := genFSs(t, rng, trialStep, newGoodPLNames, newBadPLNames, 0)
+			_, _, desiredPLNames, newBadPLNames := genPLs(rng, trialStep, persistingPLNames, 0)
+			_, _, newFTRs, newCatchAlls := genFSs(t, rng, trialStep, desiredPLNames, newBadPLNames, 0)
 			for j := 0; ; {
-				t.Logf("For %s, newGoodPLNames=%#+v", trialStep, newGoodPLNames)
+				t.Logf("For %s, desiredPLNames=%#+v", trialStep, desiredPLNames)
 				t.Logf("For %s, newFTRs=%#+v", trialStep, newFTRs)
 				// Check that the latest digestion did the right thing
+				nextPLNames := sets.NewString()
+				for oldPLName := range persistingPLNames {
+					if mandPLs[oldPLName] != nil || cts.hasNonIdleQueueSet(oldPLName) {
+						nextPLNames.Insert(oldPLName)
+					}
+				}
+				persistingPLNames = nextPLNames.Union(desiredPLNames)
+				expectedQueueSetNames := persistingPLNames.Union(mandQueueSetNames).Difference(exclQueueSetNames)
+				allQueueSetNames := cts.getQueueSetNames()
+				missingQueueSetNames := expectedQueueSetNames.Difference(allQueueSetNames)
+				if len(missingQueueSetNames) > 0 {
+					t.Errorf("Fail: missing QueueSets %v", missingQueueSetNames)
+				}
+				nonIdleQueueSetNames := cts.getNonIdleQueueSetNames()
+				extraQueueSetNames := nonIdleQueueSetNames.Difference(expectedQueueSetNames)
+				if len(extraQueueSetNames) > 0 {
+					t.Errorf("Fail: unexpected QueueSets %v", extraQueueSetNames)
+				}
+				for plName, hr, nCount := cts.popHeldRequest(); hr != nil; plName, hr, nCount = cts.popHeldRequest() {
+					desired := desiredPLNames.Has(plName) || mandPLs[plName] != nil
+					t.Logf("Releasing held request %#+v, desired=%v, plName=%s, count:=%d", hr.rd, desired, plName, nCount)
+					close(hr.finishCh)
+				}
+				cts.requestWG.Wait()
 				for _, ftr := range newFTRs {
-					checkNewFS(t, ctl, trialStep, ftr, newCatchAlls)
+					checkNewFS(cts, rng, trialStep, ftr, newCatchAlls)
 				}
 
 				j++
@@ -161,13 +269,6 @@ func TestConfigConsumer(t *testing.T) {
 				}
 
 				// Calculate expected survivors
-				nextPLNames := sets.NewString()
-				for oldPLName := range oldPLNames {
-					if mandPLs[oldPLName] != nil || cts.hasNonIdleQueueSet(oldPLName) {
-						nextPLNames.Insert(oldPLName)
-					}
-				}
-				oldPLNames = nextPLNames.Union(newGoodPLNames)
 
 				// Now create a new config and digest it
 				trialStep = fmt.Sprintf("trial%d-%d", i, j)
@@ -175,8 +276,8 @@ func TestConfigConsumer(t *testing.T) {
 				var newFSs []*fcv1a1.FlowSchema
 				var newFSMap map[string]*fcv1a1.FlowSchema
 				var newGoodPLMap map[string]*fcv1a1.PriorityLevelConfiguration
-				newPLs, newGoodPLMap, newGoodPLNames, newBadPLNames = genPLs(rng, trialStep, oldPLNames, 1+rng.Intn(4))
-				newFSs, newFSMap, newFTRs, newCatchAlls = genFSs(t, rng, trialStep, newGoodPLNames, newBadPLNames, 1+rng.Intn(6))
+				newPLs, newGoodPLMap, desiredPLNames, newBadPLNames = genPLs(rng, trialStep, persistingPLNames, 1+rng.Intn(4))
+				newFSs, newFSMap, newFTRs, newCatchAlls = genFSs(t, rng, trialStep, desiredPLNames, newBadPLNames, 1+rng.Intn(6))
 
 				if true {
 					cts.establishAPIObjects(trialStep, int32(i*10+j), newGoodPLMap, newFSMap)
@@ -190,6 +291,12 @@ func TestConfigConsumer(t *testing.T) {
 					ctl.digestConfigObjects(newPLs, newFSs)
 				}
 			}
+			for plName, hr, nCount := cts.popHeldRequest(); hr != nil; plName, hr, nCount = cts.popHeldRequest() {
+				desired := desiredPLNames.Has(plName) || mandPLs[plName] != nil
+				t.Logf("Releasing held request %#+v, desired=%v, plName=%s, count:=%d", hr.rd, desired, plName, nCount)
+				close(hr.finishCh)
+			}
+			cts.requestWG.Wait()
 			close(stopCh)
 		})
 	}
@@ -269,6 +376,9 @@ func (cts *ctlTestState) establishAPIObjects(trialStep string, traceValue int32,
 	cts.existingFSs = newExistingFSs
 
 	// Now we have to wait for all those changes to be processed.
+	// Unfortunately the goroutine counting of FakeEventClock has not
+	// been plumbed through work queues, informers, and fake
+	// clientsets.
 	time.Sleep(500 * time.Millisecond)
 	// Wait for the controller to think it has nothing to do
 	wait.PollImmediate(250*time.Millisecond, 2*time.Second, func() (bool, error) {
@@ -303,36 +413,54 @@ func (cts *ctlTestState) establishAPIObjects(trialStep string, traceValue int32,
 	cts.cfgCtl.waitForTracedValue(traceValue)
 }
 
-func checkNewFS(t *testing.T, ctl *configController, trialName string, ftr *fsTestingRecord, catchAlls map[bool]*fcv1a1.FlowSchema) {
+func checkNewFS(cts *ctlTestState, rng *rand.Rand, trialName string, ftr *fsTestingRecord, catchAlls map[bool]*fcv1a1.FlowSchema) {
+	t := cts.t
+	ctl := cts.cfgCtl
 	fs := ftr.fs
 	if fs.Name == tracerName {
 		return
 	}
+	expectedPLName := fs.Spec.PriorityLevelConfiguration.Name
+	ctx := context.Background()
+	// Use this to make sure all these requests have started executing
+	// before the next reconfiguration
+	var startWG sync.WaitGroup
 	for matches, digests1 := range ftr.digests {
 		for isResource, digests2 := range digests1 {
 			for _, rd := range digests2 {
-				matchFSName, matchDistMethod, matchPLName, startFn := ctl.Match(rd)
-				expectedMatch := matches && ftr.wellFormed && (fsPrecedes(fs, catchAlls[isResource]) || fs.Name == catchAlls[isResource].Name)
-				t.Logf("Considering FlowSchema %s, expectedMatch=%v, isResource=%v: Match(%#+v) => %q, %#+v, %q, %v", fs.Name, expectedMatch, isResource, rd, matchFSName, matchDistMethod, matchPLName, startFn)
-				if e, a := expectedMatch, matchFSName == fs.Name; e != a {
-					t.Errorf("Fail at %s/%s: matchFSName=%q", trialName, fs.Name, matchFSName)
-				}
-				if matchFSName == fs.Name {
-					if e, a := fs.Spec.PriorityLevelConfiguration.Name, matchPLName; e != a {
-						t.Errorf("Fail at %s/%s: e=%v, a=%v", trialName, fs.Name, e, a)
-					}
-				}
-				if startFn != nil {
-					exec, after := startFn(context.Background(), 47)
-					t.Logf("startFn(..) => %v, %p", exec, after)
-					if exec {
-						after()
-						t.Log("called after()")
-					}
+				finishCh := make(chan struct{})
+				rdu := uniqify(rd)
+				cts.requestWG.Add(1)
+				startWG.Add(1)
+				go func(matches, isResource bool, rdu RequestDigest) {
+					expectedMatch := matches && ftr.wellFormed && (fsPrecedes(fs, catchAlls[isResource]) || fs.Name == catchAlls[isResource].Name)
+					ctl.Handle(ctx, rdu, func(matchFS *fcv1a1.FlowSchema, matchPL *fcv1a1.PriorityLevelConfiguration) {
+						matchIsExempt := matchPL.Spec.Type == fcv1a1.PriorityLevelEnablementExempt
+						t.Logf("Considering FlowSchema %s, expectedMatch=%v, isResource=%v: Handle(%#+v) => note(fs=%s, pl=%s, isExempt=%v)", fs.Name, expectedMatch, isResource, rdu, matchFS.Name, matchPL.Name, matchIsExempt)
+						if e, a := expectedMatch, matchFS.Name == fs.Name; e != a {
+							t.Errorf("Fail at %s/%s: rd=%#+v, expectedMatch=%v, matchFSName=%q", trialName, fs.Name, rdu, expectedMatch, matchFS.Name)
+						}
+						if matchFS.Name == fs.Name {
+							if e, a := fs.Spec.PriorityLevelConfiguration.Name, matchPL.Name; e != a {
+								t.Errorf("Fail at %s/%s: e=%v, a=%v", trialName, fs.Name, e, a)
+							}
+						}
+					}, func() {
+						startWG.Done()
+						_ = <-finishCh
+					})
+					cts.requestWG.Done()
+				}(matches, isResource, rdu)
+				if rng.Float32() < 0.8 {
+					t.Logf("Immediate request %#+v, plName=%s", rdu, expectedPLName)
+					close(finishCh)
+				} else {
+					cts.addHeldRequest(expectedPLName, rdu, finishCh)
 				}
 			}
 		}
 	}
+	startWG.Wait()
 }
 
 func genPLs(rng *rand.Rand, trial string, oldPLNames sets.String, n int) (pls []*fcv1a1.PriorityLevelConfiguration, plMap map[string]*fcv1a1.PriorityLevelConfiguration, goodNames, badNames sets.String) {
@@ -359,7 +487,7 @@ func genPLs(rng *rand.Rand, trial string, oldPLNames sets.String, n int) (pls []
 		}
 	}
 	for _, pl := range mandPLs {
-		if n == 0 || rng.Float32() < 0.5 && !(goodNames.Has(pl.Name) || badNames.Has(pl.Name)) {
+		if n > 0 && rng.Float32() < 0.5 && !(goodNames.Has(pl.Name) || badNames.Has(pl.Name)) {
 			addGood(pl)
 		}
 	}
