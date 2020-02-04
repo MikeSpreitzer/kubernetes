@@ -18,6 +18,7 @@ package flowcontrol
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -29,6 +30,7 @@ import (
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	apitypes "k8s.io/apimachinery/pkg/types"
 	apierrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	fcboot "k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap"
@@ -334,18 +336,30 @@ func (cfgCtl *configController) digestConfigObjects(newPLs []*fctypesv1a1.Priori
 	fsStatusUpdates := cfgCtl.lockAndDigestConfigObjects(newPLs, newFSs)
 	var errs []error
 	for _, fsu := range fsStatusUpdates {
-		fs2 := fsu.flowSchema.DeepCopy()
-		klog.V(4).Infof("Writing %#+v to FlowSchema %s because its previous Status was %q", fsu.condition, fs2.Name, fsu.oldStatus)
-		apihelpers.SetFlowSchemaCondition(fs2, fsu.condition)
-		_, err := cfgCtl.flowcontrolClient.FlowSchemas().UpdateStatus(fs2)
+		enc, err := json.Marshal(fsu.condition)
 		if err != nil {
-			errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to set a status.condition for FlowSchema %s", fs2.Name)))
+			// should never happen because these conditions are created here and well formed
+			panic(fmt.Sprintf("Failed to json.Marshall(%#+v): %s", fsu.condition, err.Error()))
+		}
+		klog.V(4).Infof("Writing Condition %s to FlowSchema %s because its previous Status was %q", string(enc), fsu.flowSchema.Name, fsu.oldStatus)
+		_, err = cfgCtl.flowcontrolClient.FlowSchemas().Patch(fsu.flowSchema.Name, apitypes.StrategicMergePatchType, []byte(fmt.Sprintf(`{"status": {"conditions": [ %s ] } }`, string(enc))), "status")
+		if err != nil {
+			errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to set a status.condition for FlowSchema %s", fsu.flowSchema.Name)))
 		}
 	}
 	if len(errs) == 0 {
 		return nil
 	}
 	return apierrors.NewAggregate(errs)
+}
+
+func fmtMetav1Time(t metav1.Time) string {
+	ans, err := t.MarshalJSON()
+	if err != nil {
+		// metav1.Time::MarshalJSON never returns a non-nil error
+		panic(err)
+	}
+	return string(ans)
 }
 
 func (cfgCtl *configController) lockAndDigestConfigObjects(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) []fsStatusUpdate {
@@ -431,7 +445,7 @@ func (meal *cfgMeal) digestFlowSchemasLocked(newFSs []*fctypesv1a1.FlowSchema) {
 		//
 		// TODO: consider not even trying if server is not handling
 		// requests yet.
-		meal.presyncFlowSchemaStatus(fs, !goodPriorityRef)
+		meal.presyncFlowSchemaStatus(fs, !goodPriorityRef, fs.Spec.PriorityLevelConfiguration.Name)
 
 		if !goodPriorityRef {
 			klog.V(6).Infof("Ignoring FlowSchema %s because of bad priority level reference %q", fs.Name, fs.Spec.PriorityLevelConfiguration.Name)
@@ -566,7 +580,7 @@ func qscOfPL(qsf fq.QueueSetFactory, queues fq.QueueSet, pl *fctypesv1a1.Priorit
 	return qsc, err
 }
 
-func (meal *cfgMeal) presyncFlowSchemaStatus(fs *fctypesv1a1.FlowSchema, isDangling bool) {
+func (meal *cfgMeal) presyncFlowSchemaStatus(fs *fctypesv1a1.FlowSchema, isDangling bool, plName string) {
 	danglingCondition := apihelpers.GetFlowSchemaConditionByType(fs, fctypesv1a1.FlowSchemaConditionDangling)
 	if danglingCondition == nil {
 		danglingCondition = &fctypesv1a1.FlowSchemaCondition{
@@ -580,14 +594,29 @@ func (meal *cfgMeal) presyncFlowSchemaStatus(fs *fctypesv1a1.FlowSchema, isDangl
 	if danglingCondition.Status == desiredStatus {
 		return
 	}
-	meal.fsStatusUpdates = append(meal.fsStatusUpdates, fsStatusUpdate{
-		flowSchema: fs,
-		condition: fctypesv1a1.FlowSchemaCondition{
-			Type:               fctypesv1a1.FlowSchemaConditionDangling,
-			Status:             desiredStatus,
-			LastTransitionTime: metav1.Now(),
-		},
-		oldStatus: danglingCondition.Status})
+	if isDangling {
+		meal.fsStatusUpdates = append(meal.fsStatusUpdates, fsStatusUpdate{
+			flowSchema: fs,
+			condition: fctypesv1a1.FlowSchemaCondition{
+				Type:               fctypesv1a1.FlowSchemaConditionDangling,
+				Status:             desiredStatus,
+				LastTransitionTime: metav1.Now(),
+				Reason:             "NotFound",
+				Message:            fmt.Sprintf("This FlowSchema references the PriorityLevelConfiguration object named %q but there is no such object", plName),
+			},
+			oldStatus: danglingCondition.Status})
+	} else {
+		meal.fsStatusUpdates = append(meal.fsStatusUpdates, fsStatusUpdate{
+			flowSchema: fs,
+			condition: fctypesv1a1.FlowSchemaCondition{
+				Type:               fctypesv1a1.FlowSchemaConditionDangling,
+				Status:             desiredStatus,
+				LastTransitionTime: metav1.Now(),
+				Reason:             "Found",
+				Message:            fmt.Sprintf("This FlowSchema references the PriorityLevelConfiguration object named %q and it exists", plName),
+			},
+			oldStatus: danglingCondition.Status})
+	}
 }
 
 // imaginePL adds a priority level based on one of the mandatory ones

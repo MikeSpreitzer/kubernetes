@@ -152,7 +152,7 @@ func computeFlowDistinguisher(rd RequestDigest, method *fctypesv1a1.FlowDistingu
 	}
 }
 
-var hashByCRC bool
+const hashByCRC = false
 
 // hashFlowID hashes the inputs into 64-bits
 func hashFlowID(fsName, fDistinguisher string) uint64 {

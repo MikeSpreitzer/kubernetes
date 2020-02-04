@@ -196,8 +196,18 @@ func (cts *ctlTestState) popHeldRequest() (plName string, hr *heldRequest, nCoun
 	}
 }
 
-var mandQueueSetNames = sets.NewString(fcv1a1.PriorityLevelConfigurationNameCatchAll)
-var exclQueueSetNames = sets.NewString(fcv1a1.PriorityLevelConfigurationNameExempt)
+var mandQueueSetNames, exclQueueSetNames = func() (sets.String, sets.String) {
+	mandQueueSetNames := sets.NewString()
+	exclQueueSetNames := sets.NewString()
+	for _, mpl := range fcboot.MandatoryPriorityLevelConfigurations {
+		if mpl.Spec.Type == fcv1a1.PriorityLevelEnablementExempt {
+			exclQueueSetNames.Insert(mpl.Name)
+		} else {
+			mandQueueSetNames.Insert(mpl.Name)
+		}
+	}
+	return mandQueueSetNames, exclQueueSetNames
+}()
 
 func TestConfigConsumer(t *testing.T) {
 	rngOuter := rand.New(rand.NewSource(1234567890123456789))
