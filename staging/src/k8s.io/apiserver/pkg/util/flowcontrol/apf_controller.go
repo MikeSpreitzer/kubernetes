@@ -29,6 +29,7 @@ import (
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	apitypes "k8s.io/apimachinery/pkg/types"
 	apierrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	fcboot "k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap"
@@ -337,7 +338,7 @@ func (cfgCtl *configController) digestConfigObjects(newPLs []*fctypesv1a1.Priori
 		fs2 := fsu.flowSchema.DeepCopy()
 		klog.V(4).Infof("Writing %#+v to FlowSchema %s because its previous Status was %q", fsu.condition, fs2.Name, fsu.oldStatus)
 		apihelpers.SetFlowSchemaCondition(fs2, fsu.condition)
-		_, err := cfgCtl.flowcontrolClient.FlowSchemas().UpdateStatus(fs2)
+		_, err := cfgCtl.flowcontrolClient.FlowSchemas().Patch(fsu.flowSchema.Name, apitypes.ApplyPatchType, []byte(fmt.Sprintf(`{"status": {"conditions": [ { "type":%q, "status":%q, "lastTransitionTime":%s, "reason":%q, "message":%q } ] } }`, fsu.condition.Type, fsu.condition.Status, fmtMetav1Time(fsu.condition.LastTransitionTime), fsu.condition.Reason, fsu.condition.Message)), "status")
 		if err != nil {
 			errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to set a status.condition for FlowSchema %s", fs2.Name)))
 		}
@@ -346,6 +347,15 @@ func (cfgCtl *configController) digestConfigObjects(newPLs []*fctypesv1a1.Priori
 		return nil
 	}
 	return apierrors.NewAggregate(errs)
+}
+
+func fmtMetav1Time(t metav1.Time) string {
+	ans, err := t.MarshalJSON()
+	if err != nil {
+		// metav1.Time::MarshalJSON never returns a non-nil error
+		panic(err)
+	}
+	return string(ans)
 }
 
 func (cfgCtl *configController) lockAndDigestConfigObjects(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) []fsStatusUpdate {
@@ -431,7 +441,7 @@ func (meal *cfgMeal) digestFlowSchemasLocked(newFSs []*fctypesv1a1.FlowSchema) {
 		//
 		// TODO: consider not even trying if server is not handling
 		// requests yet.
-		meal.presyncFlowSchemaStatus(fs, !goodPriorityRef)
+		meal.presyncFlowSchemaStatus(fs, !goodPriorityRef, fs.Spec.PriorityLevelConfiguration.Name)
 
 		if !goodPriorityRef {
 			klog.V(6).Infof("Ignoring FlowSchema %s because of bad priority level reference %q", fs.Name, fs.Spec.PriorityLevelConfiguration.Name)
@@ -566,7 +576,7 @@ func qscOfPL(qsf fq.QueueSetFactory, queues fq.QueueSet, pl *fctypesv1a1.Priorit
 	return qsc, err
 }
 
-func (meal *cfgMeal) presyncFlowSchemaStatus(fs *fctypesv1a1.FlowSchema, isDangling bool) {
+func (meal *cfgMeal) presyncFlowSchemaStatus(fs *fctypesv1a1.FlowSchema, isDangling bool, plName string) {
 	danglingCondition := apihelpers.GetFlowSchemaConditionByType(fs, fctypesv1a1.FlowSchemaConditionDangling)
 	if danglingCondition == nil {
 		danglingCondition = &fctypesv1a1.FlowSchemaCondition{
@@ -586,6 +596,8 @@ func (meal *cfgMeal) presyncFlowSchemaStatus(fs *fctypesv1a1.FlowSchema, isDangl
 			Type:               fctypesv1a1.FlowSchemaConditionDangling,
 			Status:             desiredStatus,
 			LastTransitionTime: metav1.Now(),
+			Reason:             "PriorityLevelConfigurationNotFound",
+			Message:            fmt.Sprintf("This FlowSchema references the PriorityLevelConfiguration object named %q but there is no such object", plName),
 		},
 		oldStatus: danglingCondition.Status})
 }
