@@ -56,35 +56,44 @@ var (
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "rejected_requests_total",
-			Help:      "Number of rejected requests by api priority and fairness system",
+			Help:      "Number of requests rejected by API Priority and Fairness system",
 		},
-		[]string{priorityLevel, "reason"},
+		[]string{priorityLevel, flowSchema, "reason"},
+	)
+	apiserverDispatchedRequestsTotal = compbasemetrics.NewCounterVec(
+		&compbasemetrics.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "dispatched_requests_total",
+			Help:      "Number of requests released by API Priority and Fairness system for service",
+		},
+		[]string{priorityLevel, flowSchema},
 	)
 	apiserverCurrentInqueueRequests = compbasemetrics.NewGaugeVec(
 		&compbasemetrics.GaugeOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "current_inqueue_requests",
-			Help:      "Number of requests currently pending in the queue by the api priority and fairness system",
+			Help:      "Number of requests currently pending in queues of the API Priority and Fairness system",
 		},
-		[]string{priorityLevel},
+		[]string{priorityLevel, flowSchema},
 	)
 	apiserverRequestQueueLength = compbasemetrics.NewHistogramVec(
 		&compbasemetrics.HistogramOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
-			Name:      "request_queue_length",
-			Help:      "Length of queue in the api priority and fairness system",
+			Name:      "request_queue_length_after_enqueue",
+			Help:      "Length of queue in the API Priority and Fairness system, as seen by each request after it is enqueued",
 			Buckets:   queueLengthBuckets,
 		},
-		[]string{priorityLevel},
+		[]string{priorityLevel, flowSchema},
 	)
 	apiserverRequestConcurrencyLimit = compbasemetrics.NewGaugeVec(
 		&compbasemetrics.GaugeOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "request_concurrency_limit",
-			Help:      "Shared concurrency limit in the api priority and fairness system",
+			Help:      "Shared concurrency limit in the API Priority and Fairness system",
 		},
 		[]string{priorityLevel},
 	)
@@ -93,9 +102,9 @@ var (
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "current_executing_requests",
-			Help:      "Number of requests currently executing in the api priority and fairness system",
+			Help:      "Number of requests currently executing in the API Priority and Fairness system",
 		},
-		[]string{priorityLevel},
+		[]string{priorityLevel, flowSchema},
 	)
 	apiserverRequestWaitingSeconds = compbasemetrics.NewHistogramVec(
 		&compbasemetrics.HistogramOpts{
@@ -112,13 +121,14 @@ var (
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "request_execution_seconds",
-			Help:      "Time of request executing in the api priority and fairness system",
+			Help:      "Duration of request execution in the API Priority and Fairness system",
 			Buckets:   requestDurationSecondsBuckets,
 		},
 		[]string{priorityLevel, flowSchema},
 	)
 	metrics = []compbasemetrics.Registerable{
 		apiserverRejectedRequestsTotal,
+		apiserverDispatchedRequestsTotal,
 		apiserverCurrentInqueueRequests,
 		apiserverRequestQueueLength,
 		apiserverRequestConcurrencyLimit,
@@ -129,13 +139,13 @@ var (
 )
 
 // UpdateFlowControlRequestsInQueue updates the value for the # of requests in the specified queues in flow control
-func UpdateFlowControlRequestsInQueue(priorityLevel string, inqueue int) {
-	apiserverCurrentInqueueRequests.WithLabelValues(priorityLevel).Set(float64(inqueue))
+func UpdateFlowControlRequestsInQueue(priorityLevel, flowSchema string, inqueue int) {
+	apiserverCurrentInqueueRequests.WithLabelValues(priorityLevel, flowSchema).Set(float64(inqueue))
 }
 
 // UpdateFlowControlRequestsExecuting updates the value for the # of requests executing in flow control
-func UpdateFlowControlRequestsExecuting(priorityLevel string, executing int) {
-	apiserverCurrentExecutingRequests.WithLabelValues(priorityLevel).Set(float64(executing))
+func UpdateFlowControlRequestsExecuting(priorityLevel, flowSchema string, executing int) {
+	apiserverCurrentExecutingRequests.WithLabelValues(priorityLevel, flowSchema).Set(float64(executing))
 }
 
 // UpdateSharedConcurrencyLimit updates the value for the concurrency limit in flow control
@@ -144,13 +154,18 @@ func UpdateSharedConcurrencyLimit(priorityLevel string, limit int) {
 }
 
 // AddReject increments the # of rejected requests for flow control
-func AddReject(priorityLevel string, reason string) {
-	apiserverRejectedRequestsTotal.WithLabelValues(priorityLevel, reason).Add(1)
+func AddReject(priorityLevel, flowSchema, reason string) {
+	apiserverRejectedRequestsTotal.WithLabelValues(priorityLevel, flowSchema, reason).Add(1)
+}
+
+// AddDispatch increments the # of dispatched requests for flow control
+func AddDispatch(priorityLevel, flowSchema string) {
+	apiserverDispatchedRequestsTotal.WithLabelValues(priorityLevel, flowSchema).Add(1)
 }
 
 // ObserveQueueLength observes the queue length for flow control
-func ObserveQueueLength(priorityLevel string, length int) {
-	apiserverRequestQueueLength.WithLabelValues(priorityLevel).Observe(float64(length))
+func ObserveQueueLength(priorityLevel, flowSchema string, length int) {
+	apiserverRequestQueueLength.WithLabelValues(priorityLevel, flowSchema).Observe(float64(length))
 }
 
 // ObserveWaitingDuration observes the queue length for flow control

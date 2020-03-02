@@ -109,6 +109,7 @@ func (cfgCtl *configController) Handle(ctx context.Context, requestDigest Reques
 		if queued {
 			metrics.ObserveWaitingDuration(pl.Name, fs.Name, strconv.FormatBool(req != nil), time.Since(startWaitingTime))
 		}
+		metrics.AddDispatch(pl.Name, fs.Name)
 		executed = true
 		startExecutionTime := time.Now()
 		execFn()
