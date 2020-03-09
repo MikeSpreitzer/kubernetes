@@ -227,6 +227,7 @@ func (w *watchCache) processEvent(event watch.Event, resourceVersion uint64, upd
 		Key:             key,
 		ResourceVersion: resourceVersion,
 	}
+	klog.V(6).Infof("processEvent(type=%v, key=%q)", event.Type, key)
 
 	if err := func() error {
 		// TODO: We should consider moving this lock below after the watchCacheEvent
@@ -376,6 +377,7 @@ func (w *watchCache) Replace(objs []interface{}, resourceVersion string) error {
 		if err != nil {
 			return fmt.Errorf("couldn't compute key: %v", err)
 		}
+		klog.V(6).Infof("Replacing %q", key)
 		objLabels, objFields, err := w.getAttrsFunc(object)
 		if err != nil {
 			return err
