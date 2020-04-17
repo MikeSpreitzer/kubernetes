@@ -41,6 +41,8 @@ const (
 
 // Conditions
 const (
+	// Deprecated, see the DanglingPriorityLevelConfigurationReference
+	// field of FlowSchemaStatus instead
 	FlowSchemaConditionDangling = "Dangling"
 
 	PriorityLevelConfigurationConditionConcurrencyShared = "ConcurrencyShared"
@@ -296,6 +298,12 @@ type FlowSchemaStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []FlowSchemaCondition
+
+	// `danglingPriorityLevelConfigurationReference` is non-empty when
+	// the spec refers to a priority level that does not exist, and in
+	// that case contains the reference in question; otherwise this
+	// field is emtpy/absent.
+	DanglingPriorityLevelConfigurationReference *PriorityLevelConfigurationReference
 }
 
 // FlowSchemaCondition describes conditions for a FlowSchema.
