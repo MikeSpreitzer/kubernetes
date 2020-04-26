@@ -19,9 +19,13 @@ package flowcontrol
 import (
 	"testing"
 
+	"k8s.io/klog"
 	"k8s.io/kubernetes/test/integration/framework"
 )
 
 func TestMain(m *testing.M) {
+	if false {
+		klog.InitFlags(nil)
+	}
 	framework.EtcdMain(m.Run)
 }
