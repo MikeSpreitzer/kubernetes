@@ -53,6 +53,22 @@ type Interface interface {
 	Run(stopCh <-chan struct{}) error
 }
 
+type TestableInterface interface {
+	Interface
+
+	// WaitForCacheSync waits for the caches of the informers of the
+	// implementation to sync.
+	WaitForCacheSync(stopCh <-chan struct{}) bool
+
+	// SyncOne attempts to sync all the API Priority and Fairness
+	// config objects.  Returns a bool indicating whether updates were
+	// attempted, another bool indicating whether updates succeeded,
+	// another bool indicating whether a retry is needed to recover
+	// from errors, and a Duration to wait before trying again if
+	// updates are desired but suppressed (zero otherwise).
+	SyncOne() (bool, bool, bool, time.Duration)
+}
+
 // This request filter implements https://github.com/kubernetes/enhancements/blob/master/keps/sig-api-machinery/20190228-priority-and-fairness.md
 
 // New creates a new instance to implement API priority and fairness
@@ -63,24 +79,33 @@ func New(
 	requestWaitLimit time.Duration,
 ) Interface {
 	grc := counter.NoOp{}
+	clk := clock.RealClock{}
 	return NewTestable(
+		"Controller",
+		false,
+		clk,
+		false,
 		informerFactory,
 		flowcontrolClient,
 		serverConcurrencyLimit,
 		requestWaitLimit,
-		fqs.NewQueueSetFactory(&clock.RealClock{}, grc),
+		fqs.NewQueueSetFactory(clk, grc),
 	)
 }
 
 // NewTestable is extra flexible to facilitate testing
 func NewTestable(
+	name string,
+	ignoreNotifications bool,
+	clock clock.PassiveClock,
+	invertDangle bool,
 	informerFactory kubeinformers.SharedInformerFactory,
 	flowcontrolClient fcclientv1a1.FlowcontrolV1alpha1Interface,
 	serverConcurrencyLimit int,
 	requestWaitLimit time.Duration,
 	queueSetFactory fq.QueueSetFactory,
-) Interface {
-	return newTestableController(informerFactory, flowcontrolClient, serverConcurrencyLimit, requestWaitLimit, queueSetFactory)
+) TestableInterface {
+	return newTestableController(name, ignoreNotifications, clock, invertDangle, informerFactory, flowcontrolClient, serverConcurrencyLimit, requestWaitLimit, queueSetFactory)
 }
 
 func (cfgCtl *configController) Handle(ctx context.Context, requestDigest RequestDigest,
