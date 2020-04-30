@@ -315,7 +315,7 @@ func (cfgCtl *configController) SyncOne() (bool, bool, bool, time.Duration) {
 		return triedWrites, didWrites, false, wait
 	}
 	klog.Error(err)
-	return triedWrites, didWrites, false, 0
+	return triedWrites, didWrites, true, 0
 }
 
 // cfgMeal is the data involved in the process of digesting the API
