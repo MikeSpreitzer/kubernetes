@@ -24,10 +24,11 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apiserver/pkg/util/flowcontrol/counter"
 	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
 	test "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/testing"
-	"k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/testing/clock"
+	testclock "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/testing/clock"
 	"k8s.io/apiserver/pkg/util/flowcontrol/metrics"
 	"k8s.io/klog/v2"
 )
@@ -57,11 +58,11 @@ func exerciseQueueSetUniformScenario(t *testing.T, name string, qs fq.QueueSet, 
 	evalDuration time.Duration,
 	expectPass, expectedAllRequests, expectInqueueMetrics, expectExecutingMetrics bool,
 	rejectReason string,
-	clk *clock.FakeEventClock, counter counter.GoRoutineCounter) {
+	clk *testclock.FakeEventClock, counter counter.GoRoutineCounter) {
 
 	now := time.Now()
 	t.Logf("%s: Start %s, clk=%p, grc=%p", clk.Now().Format(nsTimeFmt), name, clk, counter)
-	integrators := make([]test.Integrator, len(sc))
+	integrators := make([]fq.Integrator, len(sc))
 	var failedCount uint64
 	expectedInqueue := ""
 	expectedExecuting := ""
@@ -71,15 +72,15 @@ func exerciseQueueSetUniformScenario(t *testing.T, name string, qs fq.QueueSet, 
 	executions := make([]int32, len(sc))
 	rejects := make([]int32, len(sc))
 	for i, uc := range sc {
-		integrators[i] = test.NewIntegrator(clk)
+		integrators[i] = fq.NewIntegrator(clk)
 		fsName := fmt.Sprintf("client%d", i)
 		expectedInqueue = expectedInqueue + fmt.Sprintf(`				apiserver_flowcontrol_current_inqueue_requests{flowSchema=%q,priorityLevel=%q} 0%s`, fsName, name, "\n")
 		for j := 0; j < uc.nThreads; j++ {
 			counter.Add(1)
-			go func(i, j int, uc uniformClient, igr test.Integrator) {
+			go func(i, j int, uc uniformClient, igr fq.Integrator) {
 				for k := 0; k < uc.nCalls; k++ {
 					ClockWait(clk, counter, uc.thinkDuration)
-					req, idle := qs.StartRequest(context.Background(), uc.hash, "", fsName, name, []int{i, j, k})
+					req, idle := qs.StartRequest(context.Background(), uc.hash, "", fsName, name, []int{i, j, k}, nil)
 					t.Logf("%s: %d, %d, %d got req=%p, idle=%v", clk.Now().Format(nsTimeFmt), i, j, k, req, idle)
 					if req == nil {
 						atomic.AddUint64(&failedCount, 1)
@@ -92,7 +93,8 @@ func exerciseQueueSetUniformScenario(t *testing.T, name string, qs fq.QueueSet, 
 					var executed bool
 					idle2 := req.Finish(func() {
 						executed = true
-						t.Logf("%s: %d, %d, %d executing", clk.Now().Format(nsTimeFmt), i, j, k)
+						execStart := clk.Now()
+						t.Logf("%s: %d, %d, %d executing", execStart.Format(nsTimeFmt), i, j, k)
 						atomic.AddInt32(&executions[i], 1)
 						igr.Add(1)
 						ClockWait(clk, counter, uc.execDuration)
@@ -112,7 +114,7 @@ func exerciseQueueSetUniformScenario(t *testing.T, name string, qs fq.QueueSet, 
 	clk.Run(&lim)
 	clk.SetTime(lim)
 	t.Logf("%s: End", clk.Now().Format(nsTimeFmt))
-	results := make([]test.IntegratorResults, len(sc))
+	results := make([]fq.IntegratorResults, len(sc))
 	var sumOfAvg float64
 	for i := range sc {
 		results[i] = integrators[i].GetResults()
@@ -188,7 +190,7 @@ func exerciseQueueSetUniformScenario(t *testing.T, name string, qs fq.QueueSet, 
 	}
 }
 
-func ClockWait(clk *clock.FakeEventClock, counter counter.GoRoutineCounter, duration time.Duration) {
+func ClockWait(clk *testclock.FakeEventClock, counter counter.GoRoutineCounter, duration time.Duration) {
 	dunch := make(chan struct{})
 	clk.EventAfterDuration(func(time.Time) {
 		counter.Add(1)
@@ -208,8 +210,8 @@ func init() {
 func TestNoRestraint(t *testing.T) {
 	metrics.Register()
 	now := time.Now()
-	clk, counter := clock.NewFakeEventClock(now, 0, nil)
-	nrc, err := test.NewNoRestraintFactory().BeginConstruction(fq.QueuingConfig{})
+	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
+	nrc, err := test.NewNoRestraintFactory().BeginConstruction(fq.QueuingConfig{}, newObserverPair(clk))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +226,7 @@ func TestUniformFlows(t *testing.T) {
 	metrics.Register()
 	now := time.Now()
 
-	clk, counter := clock.NewFakeEventClock(now, 0, nil)
+	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
 	qsf := NewQueueSetFactory(clk, counter)
 	qCfg := fq.QueuingConfig{
 		Name:             "TestUniformFlows",
@@ -233,7 +235,7 @@ func TestUniformFlows(t *testing.T) {
 		HandSize:         3,
 		RequestWaitLimit: 10 * time.Minute,
 	}
-	qsc, err := qsf.BeginConstruction(qCfg)
+	qsc, err := qsf.BeginConstruction(qCfg, newObserverPair(clk))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +251,7 @@ func TestDifferentFlows(t *testing.T) {
 	metrics.Register()
 	now := time.Now()
 
-	clk, counter := clock.NewFakeEventClock(now, 0, nil)
+	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
 	qsf := NewQueueSetFactory(clk, counter)
 	qCfg := fq.QueuingConfig{
 		Name:             "TestDifferentFlows",
@@ -258,7 +260,7 @@ func TestDifferentFlows(t *testing.T) {
 		HandSize:         3,
 		RequestWaitLimit: 10 * time.Minute,
 	}
-	qsc, err := qsf.BeginConstruction(qCfg)
+	qsc, err := qsf.BeginConstruction(qCfg, newObserverPair(clk))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,13 +276,13 @@ func TestDifferentFlowsWithoutQueuing(t *testing.T) {
 	metrics.Register()
 	now := time.Now()
 
-	clk, counter := clock.NewFakeEventClock(now, 0, nil)
+	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
 	qsf := NewQueueSetFactory(clk, counter)
 	qCfg := fq.QueuingConfig{
 		Name:             "TestDifferentFlowsWithoutQueuing",
 		DesiredNumQueues: 0,
 	}
-	qsc, err := qsf.BeginConstruction(qCfg)
+	qsc, err := qsf.BeginConstruction(qCfg, newObserverPair(clk))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +308,7 @@ func TestTimeout(t *testing.T) {
 	metrics.Register()
 	now := time.Now()
 
-	clk, counter := clock.NewFakeEventClock(now, 0, nil)
+	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
 	qsf := NewQueueSetFactory(clk, counter)
 	qCfg := fq.QueuingConfig{
 		Name:             "TestTimeout",
@@ -315,7 +317,7 @@ func TestTimeout(t *testing.T) {
 		HandSize:         1,
 		RequestWaitLimit: 0,
 	}
-	qsc, err := qsf.BeginConstruction(qCfg)
+	qsc, err := qsf.BeginConstruction(qCfg, newObserverPair(clk))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +332,7 @@ func TestContextCancel(t *testing.T) {
 	metrics.Register()
 	metrics.Reset()
 	now := time.Now()
-	clk, counter := clock.NewFakeEventClock(now, 0, nil)
+	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
 	qsf := NewQueueSetFactory(clk, counter)
 	qCfg := fq.QueuingConfig{
 		Name:             "TestContextCancel",
@@ -339,17 +341,25 @@ func TestContextCancel(t *testing.T) {
 		HandSize:         1,
 		RequestWaitLimit: 15 * time.Second,
 	}
-	qsc, err := qsf.BeginConstruction(qCfg)
+	qsc, err := qsf.BeginConstruction(qCfg, newObserverPair(clk))
 	if err != nil {
 		t.Fatal(err)
 	}
 	qs := qsc.Complete(fq.DispatchingConfig{ConcurrencyLimit: 1})
 	counter.Add(1) // account for the goroutine running this test
 	ctx1 := context.Background()
-	req1, _ := qs.StartRequest(ctx1, 1, "", "fs1", "test", "one")
+	b2i := map[bool]int{false: 0, true: 1}
+	var qnc [2][2]int32
+	req1, _ := qs.StartRequest(ctx1, 1, "", "fs1", "test", "one", func(inQueue bool) { atomic.AddInt32(&qnc[0][b2i[inQueue]], 1) })
 	if req1 == nil {
 		t.Error("Request rejected")
 		return
+	}
+	if a := atomic.AddInt32(&qnc[0][0], 0); a != 1 {
+		t.Errorf("Got %d calls to queueNoteFn1(false), expected 1", a)
+	}
+	if a := atomic.AddInt32(&qnc[0][1], 0); a != 1 {
+		t.Errorf("Got %d calls to queueNoteFn1(true), expected 1", a)
 	}
 	var executed1 bool
 	idle1 := req1.Finish(func() {
@@ -358,11 +368,17 @@ func TestContextCancel(t *testing.T) {
 		tBefore := time.Now()
 		go func() {
 			time.Sleep(time.Second)
+			if a := atomic.AddInt32(&qnc[1][0], 0); a != 0 {
+				t.Errorf("Got %d calls to queueNoteFn2(false), expected 0", a)
+			}
+			if a := atomic.AddInt32(&qnc[1][1], 0); a != 1 {
+				t.Errorf("Got %d calls to queueNoteFn2(true), expected 1", a)
+			}
 			// account for unblocking the goroutine that waits on cancelation
 			counter.Add(1)
 			cancel2()
 		}()
-		req2, idle2a := qs.StartRequest(ctx2, 2, "", "fs2", "test", "two")
+		req2, idle2a := qs.StartRequest(ctx2, 2, "", "fs2", "test", "two", func(inQueue bool) { atomic.AddInt32(&qnc[1][b2i[inQueue]], 1) })
 		if idle2a {
 			t.Error("2nd StartRequest returned idle")
 		}
@@ -372,6 +388,9 @@ func TestContextCancel(t *testing.T) {
 			})
 			if idle2b {
 				t.Error("2nd Finish returned idle")
+			}
+			if a := atomic.AddInt32(&qnc[1][0], 0); a != 1 {
+				t.Errorf("Got %d calls to queueNoteFn2(false), expected 1", a)
 			}
 		}
 		tAfter := time.Now()
@@ -386,4 +405,8 @@ func TestContextCancel(t *testing.T) {
 	if !idle1 {
 		t.Error("Not idle at the end")
 	}
+}
+
+func newObserverPair(clk clock.PassiveClock) metrics.TimedObserverPair {
+	return metrics.PriorityLevelConcurrencyObserverPairGenerator.Generate(1, 1, []string{"test"})
 }
