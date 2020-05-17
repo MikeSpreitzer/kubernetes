@@ -20,12 +20,18 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	fcv1a1 "k8s.io/api/flowcontrol/v1alpha1"
 	apitypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
+	epmetrics "k8s.io/apiserver/pkg/endpoints/metrics"
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
 	utilflowcontrol "k8s.io/apiserver/pkg/util/flowcontrol"
+	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
+	metrics "k8s.io/apiserver/pkg/util/flowcontrol/metrics"
 	"k8s.io/klog/v2"
 )
 
@@ -54,6 +60,7 @@ func GetClassification(ctx context.Context) *PriorityAndFairnessClassification {
 }
 
 var atomicMutatingLen, atomicNonMutatingLen int32
+var startWindowedOnce sync.Once
 
 // WithPriorityAndFairness limits the number of in-flight
 // requests in a fine-grained way.
@@ -67,6 +74,9 @@ func WithPriorityAndFairness(
 		return handler
 	}
 	startOnce.Do(startRecordingUsage)
+	startWindowedOnce.Do(func() {
+		go reportWindowedStats(fcIfc)
+	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		requestInfo, ok := apirequest.RequestInfoFrom(ctx)
@@ -99,19 +109,16 @@ func WithPriorityAndFairness(
 		var served bool
 		isMutatingRequest := !nonMutatingRequestVerbs.Has(requestInfo.Verb)
 		execute := func() {
-			var mutatingLen, readOnlyLen int
 			if isMutatingRequest {
-				mutatingLen = int(atomic.AddInt32(&atomicMutatingLen, 1))
+				watermark.recordMutating(int(atomic.AddInt32(&atomicMutatingLen, 1)))
 			} else {
-				readOnlyLen = int(atomic.AddInt32(&atomicNonMutatingLen, 1))
+				watermark.recordReadOnly(int(atomic.AddInt32(&atomicNonMutatingLen, 1)))
 			}
 			defer func() {
 				if isMutatingRequest {
-					atomic.AddInt32(&atomicMutatingLen, -11)
-					watermark.recordMutating(mutatingLen)
+					watermark.recordMutating(int(atomic.AddInt32(&atomicMutatingLen, -1)))
 				} else {
-					atomic.AddInt32(&atomicNonMutatingLen, -1)
-					watermark.recordReadOnly(readOnlyLen)
+					watermark.recordReadOnly(int(atomic.AddInt32(&atomicNonMutatingLen, -1)))
 				}
 			}()
 			served = true
@@ -129,4 +136,27 @@ func WithPriorityAndFairness(
 		}
 
 	})
+}
+
+const windowWidth = 25 * time.Second
+
+func reportWindowedStats(fcIfc utilflowcontrol.Interface) {
+	ints := make(map[string]*fq.IntegratorPair)
+	statmm := make(map[string]map[string]*epmetrics.WindowStats)
+	wait.Forever(func() {
+		fcIfc.ExtractIntegrators(ints)
+		for plName, ip := range ints {
+			statm := statmm[plName]
+			if statm == nil {
+				statm = map[string]*epmetrics.WindowStats{
+					metrics.WaitingPhase:   {},
+					metrics.ExecutingPhase: {},
+				}
+				statmm[plName] = statm
+			}
+			*statm[metrics.WaitingPhase] = convertWindowResults(ip.RequestsWaiting.Reset())
+			*statm[metrics.ExecutingPhase] = convertWindowResults(ip.RequestsExecuting.Reset())
+		}
+		metrics.SetWindowedRequestStats(statmm)
+	}, windowWidth)
 }

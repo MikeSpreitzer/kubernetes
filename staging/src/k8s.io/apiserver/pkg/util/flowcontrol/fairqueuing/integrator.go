@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package testing
+package fairqueuing
 
 import (
 	"math"
@@ -32,13 +32,17 @@ type Integrator interface {
 	Set(float64) // set the value of X
 	Add(float64) // add the given quantity to X
 	GetResults() IntegratorResults
+
+	// Return the results of integrating to now, and reset integration to start now
+	Reset() IntegratorResults
 }
 
 // IntegratorResults holds statistical abstracts of the integration
 type IntegratorResults struct {
 	Duration  float64 //seconds
 	Average   float64
-	Deviation float64 //sqrt(avg((value-avg)^2))
+	Deviation float64 //standard deviation: sqrt(avg((value-avg)^2))
+	Min, Max  float64
 }
 
 type integrator struct {
@@ -47,6 +51,7 @@ type integrator struct {
 	lastTime  time.Time
 	x         float64
 	integrals [3]float64 // integral of x^0, x^1, and x^2
+	min, max  float64
 }
 
 // NewIntegrator makes one that uses the given clock
@@ -59,15 +64,24 @@ func NewIntegrator(clk clock.PassiveClock) Integrator {
 
 func (igr *integrator) Set(x float64) {
 	igr.Lock()
+	igr.setLocked(x)
+	igr.Unlock()
+}
+
+func (igr *integrator) setLocked(x float64) {
 	igr.updateLocked()
 	igr.x = x
-	igr.Unlock()
+	if x < igr.min {
+		igr.min = x
+	}
+	if x > igr.max {
+		igr.max = x
+	}
 }
 
 func (igr *integrator) Add(deltaX float64) {
 	igr.Lock()
-	igr.updateLocked()
-	igr.x += deltaX
+	igr.setLocked(igr.x + deltaX)
 	igr.Unlock()
 }
 
@@ -80,9 +94,23 @@ func (igr *integrator) updateLocked() {
 	igr.integrals[2] += dt * igr.x * igr.x
 }
 
-func (igr *integrator) GetResults() (results IntegratorResults) {
+func (igr *integrator) GetResults() IntegratorResults {
 	igr.Lock()
 	defer func() { igr.Unlock() }()
+	return igr.getResultsLocked()
+}
+
+func (igr *integrator) Reset() IntegratorResults {
+	igr.Lock()
+	defer func() { igr.Unlock() }()
+	results := igr.getResultsLocked()
+	igr.integrals = [3]float64{0, 0, 0}
+	igr.min = igr.x
+	igr.max = igr.x
+	return results
+}
+
+func (igr *integrator) getResultsLocked() (results IntegratorResults) {
 	igr.updateLocked()
 	results.Duration = igr.integrals[0]
 	if results.Duration <= 0 {
@@ -99,5 +127,6 @@ func (igr *integrator) GetResults() (results IntegratorResults) {
 	if variance > 0 {
 		results.Deviation = math.Sqrt(variance)
 	}
+	results.Min, results.Max = igr.min, igr.max
 	return
 }

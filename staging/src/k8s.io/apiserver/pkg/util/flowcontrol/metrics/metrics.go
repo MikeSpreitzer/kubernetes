@@ -24,6 +24,8 @@ import (
 	compbasemetrics "k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
 	basemetricstestutil "k8s.io/component-base/metrics/testutil"
+
+	epmetrics "k8s.io/apiserver/pkg/endpoints/metrics"
 )
 
 const (
@@ -34,6 +36,19 @@ const (
 const (
 	priorityLevel = "priorityLevel"
 	flowSchema    = "flowSchema"
+	phase         = "phase"
+
+	// WaitingPhase is the phase value for a request waiting in a queue
+	WaitingPhase = "waiting"
+
+	// ExecutingPhase is the phase value for an executing request
+	ExecutingPhase = "executing"
+
+	measure       = "measure"
+	minMeasure    = "min"
+	maxMeasure    = "max"
+	avgMeasure    = "avg"
+	stddevMeasure = "stddev"
 )
 
 var (
@@ -87,6 +102,42 @@ var (
 			Help:      "Number of requests released by API Priority and Fairness system for service",
 		},
 		[]string{priorityLevel, flowSchema},
+	)
+	windowedRequestCountsMin = compbasemetrics.NewGaugeVec(
+		&compbasemetrics.GaugeOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "windowed_request_count_min",
+			Help:      "Minimum number of requests queued, executing in previous window",
+		},
+		[]string{priorityLevel, phase},
+	)
+	windowedRequestCountsMax = compbasemetrics.NewGaugeVec(
+		&compbasemetrics.GaugeOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "windowed_request_count_max",
+			Help:      "Maximum number of requests queued, executing in previous window",
+		},
+		[]string{priorityLevel, phase},
+	)
+	windowedRequestCountsAvg = compbasemetrics.NewGaugeVec(
+		&compbasemetrics.GaugeOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "windowed_request_count_avg",
+			Help:      "Average number of requests queued, executing in previous window",
+		},
+		[]string{priorityLevel, phase},
+	)
+	windowedRequestCountsStddev = compbasemetrics.NewGaugeVec(
+		&compbasemetrics.GaugeOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "windowed_request_count_stddev",
+			Help:      "Standard deviation of number of requests queued, executing in previous window",
+		},
+		[]string{priorityLevel, phase},
 	)
 	apiserverCurrentInqueueRequests = compbasemetrics.NewGaugeVec(
 		&compbasemetrics.GaugeOpts{
@@ -148,6 +199,10 @@ var (
 	metrics = []compbasemetrics.Registerable{
 		apiserverRejectedRequestsTotal,
 		apiserverDispatchedRequestsTotal,
+		windowedRequestCountsMin,
+		windowedRequestCountsMax,
+		windowedRequestCountsAvg,
+		windowedRequestCountsStddev,
 		apiserverCurrentInqueueRequests,
 		apiserverRequestQueueLength,
 		apiserverRequestConcurrencyLimit,
@@ -156,6 +211,19 @@ var (
 		apiserverRequestExecutionSeconds,
 	}
 )
+
+// SetWindowedRequestStats reports stats from the previous window.
+// statmm maps priority level name to phase to the window's stats.
+func SetWindowedRequestStats(statmm map[string]map[string]*epmetrics.WindowStats) {
+	for plName, statm := range statmm {
+		for phase, stats := range statm {
+			windowedRequestCountsMin.WithLabelValues(plName, phase).Set(stats.Min)
+			windowedRequestCountsMax.WithLabelValues(plName, phase).Set(stats.Max)
+			windowedRequestCountsAvg.WithLabelValues(plName, phase).Set(stats.Average)
+			windowedRequestCountsStddev.WithLabelValues(plName, phase).Set(stats.StandardDeviation)
+		}
+	}
+}
 
 // AddRequestsInQueues adds the given delta to the gauge of the # of requests in the queues of the specified flowSchema and priorityLevel
 func AddRequestsInQueues(priorityLevel, flowSchema string, delta int) {

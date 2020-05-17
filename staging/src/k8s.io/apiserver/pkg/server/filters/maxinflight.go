@@ -22,11 +22,13 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/endpoints/metrics"
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
+	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
 
 	"k8s.io/klog/v2"
 )
@@ -52,43 +54,43 @@ func handleError(w http.ResponseWriter, r *http.Request, err error) {
 
 // requestWatermark is used to trak maximal usage of inflight requests.
 type requestWatermark struct {
-	lock                                 sync.Mutex
-	readOnlyWatermark, mutatingWatermark int
+	readOnlyIntegrator, mutatingIntegrator fq.Integrator
 }
 
 func (w *requestWatermark) recordMutating(mutatingVal int) {
-	w.lock.Lock()
-	defer w.lock.Unlock()
-
-	if w.mutatingWatermark < mutatingVal {
-		w.mutatingWatermark = mutatingVal
-	}
+	w.mutatingIntegrator.Set(float64(mutatingVal))
 }
 
 func (w *requestWatermark) recordReadOnly(readOnlyVal int) {
-	w.lock.Lock()
-	defer w.lock.Unlock()
-
-	if w.readOnlyWatermark < readOnlyVal {
-		w.readOnlyWatermark = readOnlyVal
-	}
+	w.readOnlyIntegrator.Set(float64(readOnlyVal))
 }
 
-var watermark = &requestWatermark{}
+var watermark = &requestWatermark{
+	readOnlyIntegrator: fq.NewIntegrator(clock.RealClock{}),
+	mutatingIntegrator: fq.NewIntegrator(clock.RealClock{}),
+}
 
 func startRecordingUsage() {
 	go func() {
 		wait.Forever(func() {
-			watermark.lock.Lock()
-			readOnlyWatermark := watermark.readOnlyWatermark
-			mutatingWatermark := watermark.mutatingWatermark
-			watermark.readOnlyWatermark = 0
-			watermark.mutatingWatermark = 0
-			watermark.lock.Unlock()
-
-			metrics.UpdateInflightRequestMetrics(readOnlyWatermark, mutatingWatermark)
+			readOnlyResults := watermark.readOnlyIntegrator.Reset()
+			mutatingResults := watermark.mutatingIntegrator.Reset()
+			metrics.UpdateInflightRequestMetrics(convertWindowResults(readOnlyResults), convertWindowResults(mutatingResults))
 		}, inflightUsageMetricUpdatePeriod)
 	}()
+}
+
+func convertWindowResults(results fq.IntegratorResults) metrics.WindowStats {
+	if results.Max < 0 {
+		results.Min = 0
+		results.Max = 0
+	}
+	return metrics.WindowStats{
+		Min:               results.Min,
+		Max:               results.Max,
+		Average:           results.Average,
+		StandardDeviation: results.Deviation,
+	}
 }
 
 var startOnce sync.Once
@@ -141,22 +143,19 @@ func WithMaxInFlightLimit(
 
 			select {
 			case c <- true:
-				var mutatingLen, readOnlyLen int
-				if isMutatingRequest {
-					mutatingLen = len(mutatingChan)
-				} else {
-					readOnlyLen = len(nonMutatingChan)
-				}
-
 				defer func() {
 					<-c
 					if isMutatingRequest {
-						watermark.recordMutating(mutatingLen)
+						watermark.recordMutating(len(c))
 					} else {
-						watermark.recordReadOnly(readOnlyLen)
+						watermark.recordReadOnly(len(c))
 					}
-
 				}()
+				if isMutatingRequest {
+					watermark.recordMutating(len(c))
+				} else {
+					watermark.recordReadOnly(len(c))
+				}
 				handler.ServeHTTP(w, r)
 
 			default:
