@@ -21,6 +21,16 @@ import (
 	"time"
 )
 
+// IntegratorPair has one for requests waiting in queues and one for
+// requests executing
+type IntegratorPair struct {
+	// RequestsWaiting integrates stats for the number of waiting requests
+	RequestsWaiting Integrator
+
+	// RequestsExecuting integrates stats for the number of executing requests
+	RequestsExecuting Integrator
+}
+
 // QueueSetFactory is used to create QueueSet objects.  Creation, like
 // config update, is done in two phases: the first phase consumes the
 // QueuingConfig and the second consumes the DispatchingConfig.  They
@@ -28,7 +38,7 @@ import (
 // before committing to a concurrency allotment for the second.
 type QueueSetFactory interface {
 	// BeginConstruction does the first phase of creating a QueueSet
-	BeginConstruction(QueuingConfig) (QueueSetCompleter, error)
+	BeginConstruction(QueuingConfig, IntegratorPair) (QueueSetCompleter, error)
 }
 
 // QueueSetCompleter finishes the two-step process of creating or

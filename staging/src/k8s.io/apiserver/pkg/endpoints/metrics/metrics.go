@@ -151,6 +151,16 @@ var (
 		[]string{"requestKind"},
 	)
 
+	// WindowStats from the last window
+	concurrencyGauges = compbasemetrics.NewGaugeVec(
+		&compbasemetrics.GaugeOpts{
+			Name:           "apiserver_current_inflight_request_measures",
+			Help:           "Stats on number of requests executing by mutating or not, measure.",
+			StabilityLevel: compbasemetrics.ALPHA,
+		},
+		[]string{"requestKind", "measure"},
+	)
+
 	requestTerminationsTotal = compbasemetrics.NewCounterVec(
 		&compbasemetrics.CounterOpts{
 			Name:           "apiserver_request_terminations_total",
@@ -171,6 +181,7 @@ var (
 		WatchEvents,
 		WatchEventsSizes,
 		currentInflightRequests,
+		concurrencyGauges,
 		requestTerminationsTotal,
 	}
 
@@ -211,6 +222,11 @@ const (
 	ReadOnlyKind = "readOnly"
 	// MutatingKind is a string identifying mutating request kind
 	MutatingKind = "mutating"
+
+	MinMeasure    = "min"
+	MaxMeasure    = "max"
+	AvgMeasure    = "avg"
+	StdDevMeasure = "stddev"
 )
 
 var registerMetrics sync.Once
@@ -231,9 +247,23 @@ func Reset() {
 	}
 }
 
-func UpdateInflightRequestMetrics(nonmutating, mutating int) {
-	currentInflightRequests.WithLabelValues(ReadOnlyKind).Set(float64(nonmutating))
-	currentInflightRequests.WithLabelValues(MutatingKind).Set(float64(mutating))
+type WindowStats struct {
+	Min, Max          float64
+	Average           float64
+	StandardDeviation float64
+}
+
+func UpdateInflightRequestMetrics(readOnly, mutating WindowStats) {
+	currentInflightRequests.WithLabelValues(ReadOnlyKind).Set(readOnly.Max)
+	currentInflightRequests.WithLabelValues(MutatingKind).Set(mutating.Max)
+	concurrencyGauges.WithLabelValues(ReadOnlyKind, MinMeasure).Set(readOnly.Min)
+	concurrencyGauges.WithLabelValues(MutatingKind, MinMeasure).Set(mutating.Min)
+	concurrencyGauges.WithLabelValues(ReadOnlyKind, MaxMeasure).Set(readOnly.Max)
+	concurrencyGauges.WithLabelValues(MutatingKind, MaxMeasure).Set(mutating.Max)
+	concurrencyGauges.WithLabelValues(ReadOnlyKind, AvgMeasure).Set(readOnly.Average)
+	concurrencyGauges.WithLabelValues(MutatingKind, AvgMeasure).Set(mutating.Average)
+	concurrencyGauges.WithLabelValues(ReadOnlyKind, StdDevMeasure).Set(readOnly.StandardDeviation)
+	concurrencyGauges.WithLabelValues(MutatingKind, StdDevMeasure).Set(mutating.StandardDeviation)
 }
 
 // RecordRequestTermination records that the request was terminated early as part of a resource
