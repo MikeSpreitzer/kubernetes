@@ -24,6 +24,8 @@ import (
 	compbasemetrics "k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
 	basemetricstestutil "k8s.io/component-base/metrics/testutil"
+
+	epmetrics "k8s.io/apiserver/pkg/endpoints/metrics"
 )
 
 const (
@@ -34,6 +36,19 @@ const (
 const (
 	priorityLevel = "priorityLevel"
 	flowSchema    = "flowSchema"
+	phase         = "phase"
+
+	// WaitingPhase is the phase value for a request waiting in a queue
+	WaitingPhase = "waiting"
+
+	// ExecutingPhase is the phase value for an executing request
+	ExecutingPhase = "executing"
+
+	measure       = "measure"
+	minMeasure    = "min"
+	maxMeasure    = "max"
+	avgMeasure    = "avg"
+	stddevMeasure = "stddev"
 )
 
 var (
@@ -87,6 +102,15 @@ var (
 			Help:      "Number of requests released by API Priority and Fairness system for service",
 		},
 		[]string{priorityLevel, flowSchema},
+	)
+	windowedRequestStats = compbasemetrics.NewGaugeVec(
+		&compbasemetrics.GaugeOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "windowed_request_stats",
+			Help:      "windowed stats on number of requests queued, executing",
+		},
+		[]string{priorityLevel, phase, measure},
 	)
 	apiserverCurrentInqueueRequests = compbasemetrics.NewGaugeVec(
 		&compbasemetrics.GaugeOpts{
@@ -148,6 +172,7 @@ var (
 	metrics = []compbasemetrics.Registerable{
 		apiserverRejectedRequestsTotal,
 		apiserverDispatchedRequestsTotal,
+		windowedRequestStats,
 		apiserverCurrentInqueueRequests,
 		apiserverRequestQueueLength,
 		apiserverRequestConcurrencyLimit,
@@ -156,6 +181,19 @@ var (
 		apiserverRequestExecutionSeconds,
 	}
 )
+
+// SetWindowedRequestStats reports stats from the previous window.
+// statmm maps priority level name to phase to the window's stats.
+func SetWindowedRequestStats(statmm map[string]map[string]*epmetrics.WindowStats) {
+	for plName, statm := range statmm {
+		for phase, stats := range statm {
+			windowedRequestStats.WithLabelValues(plName, phase, minMeasure).Set(stats.Min)
+			windowedRequestStats.WithLabelValues(plName, phase, maxMeasure).Set(stats.Max)
+			windowedRequestStats.WithLabelValues(plName, phase, avgMeasure).Set(stats.Average)
+			windowedRequestStats.WithLabelValues(plName, phase, stddevMeasure).Set(stats.StandardDeviation)
+		}
+	}
+}
 
 // AddRequestsInQueues adds the given delta to the gauge of the # of requests in the queues of the specified flowSchema and priorityLevel
 func AddRequestsInQueues(priorityLevel, flowSchema string, delta int) {

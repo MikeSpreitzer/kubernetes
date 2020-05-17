@@ -51,6 +51,11 @@ type Interface interface {
 	// any needed changes to local behavior.  This method ceases
 	// activity and returns after the given channel is closed.
 	Run(stopCh <-chan struct{}) error
+
+	// ExtractIntegrators ensures that ints maps every current
+	// priority level's name to an IntegratorPair.  Irrelevant entries
+	// are not removed.
+	ExtractIntegrators(ints map[string]*fq.IntegratorPair)
 }
 
 // This request filter implements https://github.com/kubernetes/enhancements/blob/master/keps/sig-api-machinery/20190228-priority-and-fairness.md

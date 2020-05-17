@@ -55,7 +55,7 @@ func genPL(rng *rand.Rand, name string) *fcv1a1.PriorityLevelConfiguration {
 			HandSize:         hs,
 			QueueLengthLimit: 5}
 	}
-	_, err := qscOfPL(noRestraintQSF, nil, plc, time.Minute)
+	_, err := qscOfPL(noRestraintQSF, nil, plc, time.Minute, newIntegratorPair())
 	if err != nil {
 		panic(err)
 	}

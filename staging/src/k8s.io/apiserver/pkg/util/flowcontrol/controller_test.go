@@ -87,7 +87,7 @@ type ctlTestRequest struct {
 	descr1, descr2 interface{}
 }
 
-func (cts *ctlTestState) BeginConstruction(qc fq.QueuingConfig) (fq.QueueSetCompleter, error) {
+func (cts *ctlTestState) BeginConstruction(qc fq.QueuingConfig, ip fq.IntegratorPair) (fq.QueueSetCompleter, error) {
 	return ctlTestQueueSetCompleter{cts, nil, qc}, nil
 }
 

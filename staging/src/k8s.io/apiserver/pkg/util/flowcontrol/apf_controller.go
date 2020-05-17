@@ -33,6 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	apitypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/clock"
 	apierrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	fcboot "k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap"
@@ -144,6 +145,9 @@ type priorityLevelState struct {
 	// number of goroutines between Controller::Match and calling the
 	// returned StartFunction
 	numPending int
+
+	// Integrators tracking number waiting, executing
+	integratorPair fq.IntegratorPair
 }
 
 // NewTestableController is extra flexible to facilitate testing
@@ -166,6 +170,14 @@ func newTestableController(
 	// ensure the data structure reflects the mandatory config
 	cfgCtl.lockAndDigestConfigObjects(nil, nil)
 	return cfgCtl
+}
+
+func (cfgCtl *configController) ExtractIntegrators(ints map[string]*fq.IntegratorPair) {
+	cfgCtl.lock.Lock()
+	defer cfgCtl.lock.Unlock()
+	for plName, plState := range cfgCtl.priorityLevelStates {
+		ints[plName] = &plState.integratorPair
+	}
 }
 
 // initializeConfigController sets up the controller that processes
@@ -371,9 +383,9 @@ func (meal *cfgMeal) digestNewPLsLocked(newPLs []*fctypesv1a1.PriorityLevelConfi
 	for _, pl := range newPLs {
 		state := meal.cfgCtl.priorityLevelStates[pl.Name]
 		if state == nil {
-			state = &priorityLevelState{}
+			state = &priorityLevelState{integratorPair: newIntegratorPair()}
 		}
-		qsCompleter, err := qscOfPL(meal.cfgCtl.queueSetFactory, state.queues, pl, meal.cfgCtl.requestWaitLimit)
+		qsCompleter, err := qscOfPL(meal.cfgCtl.queueSetFactory, state.queues, pl, meal.cfgCtl.requestWaitLimit, state.integratorPair)
 		if err != nil {
 			klog.Warningf("Ignoring PriorityLevelConfiguration object %s because its spec (%s) is broken: %s", pl.Name, fcfmt.Fmt(pl.Spec), err)
 			continue
@@ -476,7 +488,7 @@ func (meal *cfgMeal) processOldPLsLocked() {
 			}
 		}
 		var err error
-		plState.qsCompleter, err = qscOfPL(meal.cfgCtl.queueSetFactory, plState.queues, plState.pl, meal.cfgCtl.requestWaitLimit)
+		plState.qsCompleter, err = qscOfPL(meal.cfgCtl.queueSetFactory, plState.queues, plState.pl, meal.cfgCtl.requestWaitLimit, plState.integratorPair)
 		if err != nil {
 			// This can not happen because qscOfPL already approved this config
 			panic(fmt.Sprintf("%s from name=%q spec=%s", err, plName, fcfmt.Fmt(plState.pl.Spec)))
@@ -524,7 +536,7 @@ func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 // qscOfPL returns a pointer to an appropriate QueuingConfig or nil
 // if no limiting is called for.  Returns nil and an error if the given
 // object is malformed in a way that is a problem for this package.
-func qscOfPL(qsf fq.QueueSetFactory, queues fq.QueueSet, pl *fctypesv1a1.PriorityLevelConfiguration, requestWaitLimit time.Duration) (fq.QueueSetCompleter, error) {
+func qscOfPL(qsf fq.QueueSetFactory, queues fq.QueueSet, pl *fctypesv1a1.PriorityLevelConfiguration, requestWaitLimit time.Duration, intPair fq.IntegratorPair) (fq.QueueSetCompleter, error) {
 	if (pl.Spec.Type == fctypesv1a1.PriorityLevelEnablementExempt) != (pl.Spec.Limited == nil) {
 		return nil, errors.New("broken union structure at the top")
 	}
@@ -553,7 +565,7 @@ func qscOfPL(qsf fq.QueueSetFactory, queues fq.QueueSet, pl *fctypesv1a1.Priorit
 	if queues != nil {
 		qsc, err = queues.BeginConfigChange(qcQS)
 	} else {
-		qsc, err = qsf.BeginConstruction(qcQS)
+		qsc, err = qsf.BeginConstruction(qcQS, intPair)
 	}
 	if err != nil {
 		err = errors.Wrap(err, fmt.Sprintf("priority level %q has QueuingConfiguration %#+v, which is invalid", pl.Name, qcAPI))
@@ -596,15 +608,17 @@ func (meal *cfgMeal) presyncFlowSchemaStatus(fs *fctypesv1a1.FlowSchema, isDangl
 // imaginePL adds a priority level based on one of the mandatory ones
 func (meal *cfgMeal) imaginePL(proto *fctypesv1a1.PriorityLevelConfiguration, requestWaitLimit time.Duration) {
 	klog.V(3).Infof("No %s PriorityLevelConfiguration found, imagining one", proto.Name)
-	qsCompleter, err := qscOfPL(meal.cfgCtl.queueSetFactory, nil, proto, requestWaitLimit)
+	intPair := newIntegratorPair()
+	qsCompleter, err := qscOfPL(meal.cfgCtl.queueSetFactory, nil, proto, requestWaitLimit, intPair)
 	if err != nil {
 		// This can not happen because proto is one of the mandatory
 		// objects and these are not erroneous
 		panic(err)
 	}
 	meal.newPLStates[proto.Name] = &priorityLevelState{
-		pl:          proto,
-		qsCompleter: qsCompleter,
+		pl:             proto,
+		qsCompleter:    qsCompleter,
+		integratorPair: intPair,
 	}
 	if proto.Spec.Limited != nil {
 		meal.shareSum += float64(proto.Spec.Limited.AssuredConcurrencyShares)
@@ -695,6 +709,13 @@ func (cfgCtl *configController) maybeReapLocked(plName string, plState *priority
 	}
 	klog.V(3).Infof("Triggered API priority and fairness config reloading because priority level %s is undesired and idle", plName)
 	cfgCtl.configQueue.Add(0)
+}
+
+func newIntegratorPair() fq.IntegratorPair {
+	return fq.IntegratorPair{
+		RequestsWaiting:   fq.NewIntegrator(clock.RealClock{}),
+		RequestsExecuting: fq.NewIntegrator(clock.RealClock{}),
+	}
 }
 
 // computeFlowDistinguisher extracts the flow distinguisher according to the given method
