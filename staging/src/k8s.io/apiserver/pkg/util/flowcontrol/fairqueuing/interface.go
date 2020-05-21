@@ -21,6 +21,16 @@ import (
 	"time"
 )
 
+// WindowedIntegratorPair has one for requests waiting in queues and one for
+// requests executing
+type WindowedIntegratorPair struct {
+	// RequestsWaiting integrates stats for the number of waiting requests
+	RequestsWaiting WindowedIntegrator
+
+	// RequestsExecuting integrates stats for the number of executing requests
+	RequestsExecuting WindowedIntegrator
+}
+
 // IntegratorPair has one for requests waiting in queues and one for
 // requests executing
 type IntegratorPair struct {
@@ -38,7 +48,7 @@ type IntegratorPair struct {
 // before committing to a concurrency allotment for the second.
 type QueueSetFactory interface {
 	// BeginConstruction does the first phase of creating a QueueSet
-	BeginConstruction(QueuingConfig, IntegratorPair) (QueueSetCompleter, error)
+	BeginConstruction(QueuingConfig, WindowedIntegratorPair) (QueueSetCompleter, error)
 }
 
 // QueueSetCompleter finishes the two-step process of creating or

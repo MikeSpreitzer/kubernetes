@@ -87,7 +87,7 @@ type ctlTestRequest struct {
 	descr1, descr2 interface{}
 }
 
-func (cts *ctlTestState) BeginConstruction(qc fq.QueuingConfig, ip fq.IntegratorPair) (fq.QueueSetCompleter, error) {
+func (cts *ctlTestState) BeginConstruction(qc fq.QueuingConfig, ip fq.WindowedIntegratorPair) (fq.QueueSetCompleter, error) {
 	return ctlTestQueueSetCompleter{cts, nil, qc}, nil
 }
 
@@ -227,6 +227,8 @@ func TestConfigConsumer(t *testing.T) {
 				100,         // server concurrency limit
 				time.Minute, // request wait limit
 				cts,
+				5*time.Second, // concurrency stats window width
+				15,            // number of windows to report
 			)
 			cts.cfgCtl = ctl
 			persistingPLNames := sets.NewString()

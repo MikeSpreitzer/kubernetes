@@ -40,7 +40,7 @@ type Integrator interface {
 // IntegratorResults holds statistical abstracts of the integration
 type IntegratorResults struct {
 	Duration  float64 //seconds
-	Average   float64
+	Average   float64 //time-weighted
 	Deviation float64 //standard deviation: sqrt(avg((value-avg)^2))
 	Min, Max  float64
 }
@@ -59,6 +59,14 @@ func NewIntegrator(clk clock.PassiveClock) Integrator {
 	return &integrator{
 		clk:      clk,
 		lastTime: clk.Now(),
+	}
+}
+
+// NewIntegratorPair makes a pair that uses the given clock
+func NewIntegratorPair(clk clock.PassiveClock) IntegratorPair {
+	return IntegratorPair{
+		RequestsWaiting:   NewIntegrator(clk),
+		RequestsExecuting: NewIntegrator(clk),
 	}
 }
 
@@ -112,6 +120,7 @@ func (igr *integrator) Reset() IntegratorResults {
 
 func (igr *integrator) getResultsLocked() (results IntegratorResults) {
 	igr.updateLocked()
+	results.Min, results.Max = igr.min, igr.max
 	results.Duration = igr.integrals[0]
 	if results.Duration <= 0 {
 		results.Average = math.NaN()
@@ -124,9 +133,8 @@ func (igr *integrator) getResultsLocked() (results IntegratorResults) {
 	// = sqrt( ( Integral( x^2 dt ) + Duration * xbar^2 - 2*xbar*Integral(x dt) ) / Duration)
 	// = sqrt( Integral(x^2 dt)/Duration - xbar^2 )
 	variance := igr.integrals[2]/igr.integrals[0] - results.Average*results.Average
-	if variance > 0 {
+	if variance >= 0 {
 		results.Deviation = math.Sqrt(variance)
 	}
-	results.Min, results.Max = igr.min, igr.max
 	return
 }

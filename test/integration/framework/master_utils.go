@@ -201,6 +201,8 @@ func startMasterOrDie(masterConfig *master.Config, incomingServer *httptest.Serv
 			clientset.FlowcontrolV1alpha1(),
 			masterConfig.GenericConfig.MaxRequestsInFlight+masterConfig.GenericConfig.MaxMutatingRequestsInFlight,
 			masterConfig.GenericConfig.RequestTimeout/4,
+			5*time.Second,
+			15,
 		)
 	}
 

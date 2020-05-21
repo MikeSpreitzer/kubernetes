@@ -37,7 +37,7 @@ type noRestraint struct{}
 
 type noRestraintRequest struct{}
 
-func (noRestraintFactory) BeginConstruction(qCfg fq.QueuingConfig, intPair fq.IntegratorPair) (fq.QueueSetCompleter, error) {
+func (noRestraintFactory) BeginConstruction(qCfg fq.QueuingConfig, intPair fq.WindowedIntegratorPair) (fq.QueueSetCompleter, error) {
 	return noRestraintCompleter{}, nil
 }
 

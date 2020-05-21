@@ -48,7 +48,7 @@ type queueSetFactory struct {
 // the fields `factory` and `theSet` is non-nil.
 type queueSetCompleter struct {
 	factory *queueSetFactory
-	intPair fq.IntegratorPair
+	intPair fq.WindowedIntegratorPair
 	theSet  *queueSet
 	qCfg    fq.QueuingConfig
 	dealer  *shufflesharding.Dealer
@@ -67,7 +67,7 @@ type queueSet struct {
 	clock                clock.PassiveClock
 	counter              counter.GoRoutineCounter
 	estimatedServiceTime float64
-	integratorPair       fq.IntegratorPair
+	integratorPair       fq.WindowedIntegratorPair
 
 	lock sync.Mutex
 
@@ -117,7 +117,7 @@ func NewQueueSetFactory(c clock.PassiveClock, counter counter.GoRoutineCounter) 
 	}
 }
 
-func (qsf *queueSetFactory) BeginConstruction(qCfg fq.QueuingConfig, intPair fq.IntegratorPair) (fq.QueueSetCompleter, error) {
+func (qsf *queueSetFactory) BeginConstruction(qCfg fq.QueuingConfig, intPair fq.WindowedIntegratorPair) (fq.QueueSetCompleter, error) {
 	dealer, err := checkConfig(qCfg)
 	if err != nil {
 		return nil, err

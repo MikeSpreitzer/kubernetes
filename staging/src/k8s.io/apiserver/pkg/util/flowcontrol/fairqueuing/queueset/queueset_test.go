@@ -389,9 +389,6 @@ func TestContextCancel(t *testing.T) {
 	}
 }
 
-func newIntegratorPair(clk clock.PassiveClock) fq.IntegratorPair {
-	return fq.IntegratorPair{
-		RequestsWaiting:   fq.NewIntegrator(clk),
-		RequestsExecuting: fq.NewIntegrator(clk),
-	}
+func newIntegratorPair(clk clock.PassiveClock) fq.WindowedIntegratorPair {
+	return fq.NewWindowedIntegratorPair(clk, 5*time.Second, 15)
 }

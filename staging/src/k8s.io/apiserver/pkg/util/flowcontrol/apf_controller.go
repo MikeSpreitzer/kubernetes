@@ -99,6 +99,9 @@ type configController struct {
 
 	flowcontrolClient fcclientv1a1.FlowcontrolV1alpha1Interface
 
+	statsWindowWidth time.Duration
+	numStatsWindows  int
+
 	// serverConcurrencyLimit is the limit on the server's total
 	// number of non-exempt requests being served at once.  This comes
 	// from server configuration.
@@ -147,7 +150,7 @@ type priorityLevelState struct {
 	numPending int
 
 	// Integrators tracking number waiting, executing
-	integratorPair fq.IntegratorPair
+	integratorPair fq.WindowedIntegratorPair
 }
 
 // NewTestableController is extra flexible to facilitate testing
@@ -157,12 +160,16 @@ func newTestableController(
 	serverConcurrencyLimit int,
 	requestWaitLimit time.Duration,
 	queueSetFactory fq.QueueSetFactory,
+	statsWindowWidth time.Duration,
+	numStatsWindows int,
 ) *configController {
 	cfgCtl := &configController{
 		queueSetFactory:        queueSetFactory,
 		serverConcurrencyLimit: serverConcurrencyLimit,
 		requestWaitLimit:       requestWaitLimit,
 		flowcontrolClient:      flowcontrolClient,
+		statsWindowWidth:       statsWindowWidth,
+		numStatsWindows:        numStatsWindows,
 		priorityLevelStates:    make(map[string]*priorityLevelState),
 	}
 	klog.V(2).Infof("NewTestableController with serverConcurrencyLimit=%d, requestWaitLimit=%s", serverConcurrencyLimit, requestWaitLimit)
@@ -172,7 +179,11 @@ func newTestableController(
 	return cfgCtl
 }
 
-func (cfgCtl *configController) ExtractIntegrators(ints map[string]*fq.IntegratorPair) {
+func (cfgCtl *configController) GetWindowWidth() time.Duration {
+	return cfgCtl.statsWindowWidth
+}
+
+func (cfgCtl *configController) ExtractIntegrators(ints map[string]*fq.WindowedIntegratorPair) {
 	cfgCtl.lock.Lock()
 	defer cfgCtl.lock.Unlock()
 	for plName, plState := range cfgCtl.priorityLevelStates {
@@ -383,7 +394,7 @@ func (meal *cfgMeal) digestNewPLsLocked(newPLs []*fctypesv1a1.PriorityLevelConfi
 	for _, pl := range newPLs {
 		state := meal.cfgCtl.priorityLevelStates[pl.Name]
 		if state == nil {
-			state = &priorityLevelState{integratorPair: newIntegratorPair()}
+			state = &priorityLevelState{integratorPair: fq.NewWindowedIntegratorPair(clock.RealClock{}, meal.cfgCtl.statsWindowWidth, meal.cfgCtl.numStatsWindows)}
 		}
 		qsCompleter, err := qscOfPL(meal.cfgCtl.queueSetFactory, state.queues, pl, meal.cfgCtl.requestWaitLimit, state.integratorPair)
 		if err != nil {
@@ -536,7 +547,7 @@ func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 // qscOfPL returns a pointer to an appropriate QueuingConfig or nil
 // if no limiting is called for.  Returns nil and an error if the given
 // object is malformed in a way that is a problem for this package.
-func qscOfPL(qsf fq.QueueSetFactory, queues fq.QueueSet, pl *fctypesv1a1.PriorityLevelConfiguration, requestWaitLimit time.Duration, intPair fq.IntegratorPair) (fq.QueueSetCompleter, error) {
+func qscOfPL(qsf fq.QueueSetFactory, queues fq.QueueSet, pl *fctypesv1a1.PriorityLevelConfiguration, requestWaitLimit time.Duration, intPair fq.WindowedIntegratorPair) (fq.QueueSetCompleter, error) {
 	if (pl.Spec.Type == fctypesv1a1.PriorityLevelEnablementExempt) != (pl.Spec.Limited == nil) {
 		return nil, errors.New("broken union structure at the top")
 	}
@@ -608,7 +619,7 @@ func (meal *cfgMeal) presyncFlowSchemaStatus(fs *fctypesv1a1.FlowSchema, isDangl
 // imaginePL adds a priority level based on one of the mandatory ones
 func (meal *cfgMeal) imaginePL(proto *fctypesv1a1.PriorityLevelConfiguration, requestWaitLimit time.Duration) {
 	klog.V(3).Infof("No %s PriorityLevelConfiguration found, imagining one", proto.Name)
-	intPair := newIntegratorPair()
+	intPair := fq.NewWindowedIntegratorPair(clock.RealClock{}, meal.cfgCtl.statsWindowWidth, meal.cfgCtl.numStatsWindows)
 	qsCompleter, err := qscOfPL(meal.cfgCtl.queueSetFactory, nil, proto, requestWaitLimit, intPair)
 	if err != nil {
 		// This can not happen because proto is one of the mandatory
@@ -709,13 +720,6 @@ func (cfgCtl *configController) maybeReapLocked(plName string, plState *priority
 	}
 	klog.V(3).Infof("Triggered API priority and fairness config reloading because priority level %s is undesired and idle", plName)
 	cfgCtl.configQueue.Add(0)
-}
-
-func newIntegratorPair() fq.IntegratorPair {
-	return fq.IntegratorPair{
-		RequestsWaiting:   fq.NewIntegrator(clock.RealClock{}),
-		RequestsExecuting: fq.NewIntegrator(clock.RealClock{}),
-	}
 }
 
 // computeFlowDistinguisher extracts the flow distinguisher according to the given method

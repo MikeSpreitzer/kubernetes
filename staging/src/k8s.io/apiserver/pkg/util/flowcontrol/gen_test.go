@@ -25,10 +25,12 @@ import (
 
 	fcv1a1 "k8s.io/api/flowcontrol/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apimachinery/pkg/util/sets"
 	fcboot "k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/endpoints/request"
+	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
 	fqtesting "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/testing"
 	fcfmt "k8s.io/apiserver/pkg/util/flowcontrol/format"
 )
@@ -55,7 +57,7 @@ func genPL(rng *rand.Rand, name string) *fcv1a1.PriorityLevelConfiguration {
 			HandSize:         hs,
 			QueueLengthLimit: 5}
 	}
-	_, err := qscOfPL(noRestraintQSF, nil, plc, time.Minute, newIntegratorPair())
+	_, err := qscOfPL(noRestraintQSF, nil, plc, time.Minute, fq.NewWindowedIntegratorPair(clock.RealClock{}, 5*time.Second, 15))
 	if err != nil {
 		panic(err)
 	}

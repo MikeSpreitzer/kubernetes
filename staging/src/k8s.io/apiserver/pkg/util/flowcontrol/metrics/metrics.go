@@ -17,6 +17,7 @@ limitations under the License.
 package metrics
 
 import (
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,7 +26,7 @@ import (
 	"k8s.io/component-base/metrics/legacyregistry"
 	basemetricstestutil "k8s.io/component-base/metrics/testutil"
 
-	epmetrics "k8s.io/apiserver/pkg/endpoints/metrics"
+	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
 )
 
 const (
@@ -37,18 +38,15 @@ const (
 	priorityLevel = "priorityLevel"
 	flowSchema    = "flowSchema"
 	phase         = "phase"
+	lag           = "lag"
+	mark          = "mark"
+	power         = "power"
 
 	// WaitingPhase is the phase value for a request waiting in a queue
 	WaitingPhase = "waiting"
 
 	// ExecutingPhase is the phase value for an executing request
 	ExecutingPhase = "executing"
-
-	measure       = "measure"
-	minMeasure    = "min"
-	maxMeasure    = "max"
-	avgMeasure    = "avg"
-	stddevMeasure = "stddev"
 )
 
 var (
@@ -103,41 +101,41 @@ var (
 		},
 		[]string{priorityLevel, flowSchema},
 	)
-	windowedRequestCountsMin = compbasemetrics.NewGaugeVec(
+	windowedRequestCountWatermarks = compbasemetrics.NewGaugeVec(
 		&compbasemetrics.GaugeOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
-			Name:      "windowed_request_count_min",
-			Help:      "Minimum number of requests queued, executing in previous window",
+			Name:      "windowed_request_count_watermark",
+			Help:      "Minimum number of requests queued, executing in recent windows",
 		},
-		[]string{priorityLevel, phase},
+		[]string{priorityLevel, phase, mark, lag},
 	)
-	windowedRequestCountsMax = compbasemetrics.NewGaugeVec(
-		&compbasemetrics.GaugeOpts{
-			Namespace: namespace,
-			Subsystem: subsystem,
-			Name:      "windowed_request_count_max",
-			Help:      "Maximum number of requests queued, executing in previous window",
-		},
-		[]string{priorityLevel, phase},
-	)
-	windowedRequestCountsAvg = compbasemetrics.NewGaugeVec(
+	windowedRequestCountAvg = compbasemetrics.NewGaugeVec(
 		&compbasemetrics.GaugeOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "windowed_request_count_avg",
-			Help:      "Average number of requests queued, executing in previous window",
+			Help:      "Average number of requests queued, executing over recent windows",
 		},
 		[]string{priorityLevel, phase},
 	)
-	windowedRequestCountsStddev = compbasemetrics.NewGaugeVec(
+	windowedRequestCountStddev = compbasemetrics.NewGaugeVec(
 		&compbasemetrics.GaugeOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "windowed_request_count_stddev",
-			Help:      "Standard deviation of number of requests queued, executing in previous window",
+			Help:      "Standard deviation of number of requests queued, executing over recent windows",
 		},
 		[]string{priorityLevel, phase},
+	)
+	windowedRequestCountIntegrals = compbasemetrics.NewCounterVec(
+		&compbasemetrics.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "windowed_request_count_integrals",
+			Help:      "Integrals of powers of number of requests queued, executing since startup",
+		},
+		[]string{priorityLevel, phase, power},
 	)
 	apiserverCurrentInqueueRequests = compbasemetrics.NewGaugeVec(
 		&compbasemetrics.GaugeOpts{
@@ -199,10 +197,10 @@ var (
 	metrics = []compbasemetrics.Registerable{
 		apiserverRejectedRequestsTotal,
 		apiserverDispatchedRequestsTotal,
-		windowedRequestCountsMin,
-		windowedRequestCountsMax,
-		windowedRequestCountsAvg,
-		windowedRequestCountsStddev,
+		windowedRequestCountWatermarks,
+		windowedRequestCountAvg,
+		windowedRequestCountStddev,
+		windowedRequestCountIntegrals,
 		apiserverCurrentInqueueRequests,
 		apiserverRequestQueueLength,
 		apiserverRequestConcurrencyLimit,
@@ -212,15 +210,36 @@ var (
 	}
 )
 
+// WindowedIntegratorResultsStep carries current results and the
+// results previously reported.  This is needed because some metrics
+// are reported through Prometheus Counters, which have an Add method
+// but not a Set method.
+type WindowedIntegratorResultsStep struct {
+	Current, Previous fq.WindowedIntegratorResults
+}
+
 // SetWindowedRequestStats reports stats from the previous window.
 // statmm maps priority level name to phase to the window's stats.
-func SetWindowedRequestStats(statmm map[string]map[string]*epmetrics.WindowStats) {
+func SetWindowedRequestStats(statmm map[string]map[string]*WindowedIntegratorResultsStep) {
 	for plName, statm := range statmm {
 		for phase, stats := range statm {
-			windowedRequestCountsMin.WithLabelValues(plName, phase).Set(stats.Min)
-			windowedRequestCountsMax.WithLabelValues(plName, phase).Set(stats.Max)
-			windowedRequestCountsAvg.WithLabelValues(plName, phase).Set(stats.Average)
-			windowedRequestCountsStddev.WithLabelValues(plName, phase).Set(stats.StandardDeviation)
+			for _, side := range []struct {
+				mark string
+				vals []float64
+			}{{"low", stats.Current.Min}, {"high", stats.Current.Max}} {
+				for lg := 1; lg < len(side.vals); lg++ {
+					windowedRequestCountWatermarks.WithLabelValues(plName, phase, side.mark, strconv.Itoa(lg)).Set(side.vals[lg])
+				}
+			}
+			windowedRequestCountAvg.WithLabelValues(plName, phase).Set(stats.Current.Average)
+			windowedRequestCountStddev.WithLabelValues(plName, phase).Set(stats.Current.StandardDeviation)
+			for i, ix := range stats.Current.Integrals {
+				var prev float64
+				if len(stats.Previous.Integrals) > i {
+					prev = stats.Previous.Integrals[i]
+				}
+				windowedRequestCountIntegrals.WithLabelValues(plName, phase, strconv.Itoa(i)).Add(ix - prev)
+			}
 		}
 	}
 }

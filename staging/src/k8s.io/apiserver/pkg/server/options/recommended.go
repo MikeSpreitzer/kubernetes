@@ -17,6 +17,8 @@ limitations under the License.
 package options
 
 import (
+	"time"
+
 	"github.com/spf13/pflag"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -129,6 +131,8 @@ func (o *RecommendedOptions) ApplyTo(config *server.RecommendedConfig) error {
 			kubernetes.NewForConfigOrDie(config.ClientConfig).FlowcontrolV1alpha1(),
 			config.MaxRequestsInFlight+config.MaxMutatingRequestsInFlight,
 			config.RequestTimeout/4,
+			5*time.Second,
+			15,
 		)
 	}
 	return nil

@@ -41,7 +41,9 @@ const (
 	// How often inflight usage metric should be updated. Because
 	// the metrics tracks maximal value over period making this
 	// longer will increase the metric value.
-	inflightUsageMetricUpdatePeriod = time.Second
+	inflightUsageMetricUpdatePeriod = 5 * time.Second
+
+	inflightMetricsWindows = 15
 )
 
 var nonMutatingRequestVerbs = sets.NewString("get", "list", "watch")
@@ -54,7 +56,8 @@ func handleError(w http.ResponseWriter, r *http.Request, err error) {
 
 // requestWatermark is used to trak maximal usage of inflight requests.
 type requestWatermark struct {
-	readOnlyIntegrator, mutatingIntegrator fq.Integrator
+	readOnlyIntegrator, mutatingIntegrator fq.WindowedIntegrator
+	readOnlyResults, mutatingResults       fq.WindowedIntegratorResults
 }
 
 func (w *requestWatermark) recordMutating(mutatingVal int) {
@@ -66,16 +69,18 @@ func (w *requestWatermark) recordReadOnly(readOnlyVal int) {
 }
 
 var watermark = &requestWatermark{
-	readOnlyIntegrator: fq.NewIntegrator(clock.RealClock{}),
-	mutatingIntegrator: fq.NewIntegrator(clock.RealClock{}),
+	readOnlyIntegrator: fq.NewWindowedIntegrator(clock.RealClock{}, inflightUsageMetricUpdatePeriod, inflightMetricsWindows),
+	mutatingIntegrator: fq.NewWindowedIntegrator(clock.RealClock{}, inflightUsageMetricUpdatePeriod, inflightMetricsWindows),
 }
 
 func startRecordingUsage() {
 	go func() {
 		wait.Forever(func() {
-			readOnlyResults := watermark.readOnlyIntegrator.Reset()
-			mutatingResults := watermark.mutatingIntegrator.Reset()
-			metrics.UpdateInflightRequestMetrics(convertWindowResults(readOnlyResults), convertWindowResults(mutatingResults))
+			readOnlyResults := watermark.readOnlyIntegrator.GetResults(watermark.readOnlyResults.Min, watermark.readOnlyResults.Max)
+			mutatingResults := watermark.mutatingIntegrator.GetResults(watermark.mutatingResults.Min, watermark.mutatingResults.Max)
+			metrics.UpdateInflightRequestMetrics(&readOnlyResults, &watermark.readOnlyResults, &mutatingResults, &watermark.mutatingResults)
+			watermark.readOnlyResults = readOnlyResults
+			watermark.mutatingResults = mutatingResults
 		}, inflightUsageMetricUpdatePeriod)
 	}()
 }

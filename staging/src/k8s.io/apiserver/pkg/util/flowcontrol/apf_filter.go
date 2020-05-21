@@ -52,10 +52,14 @@ type Interface interface {
 	// activity and returns after the given channel is closed.
 	Run(stopCh <-chan struct{}) error
 
+	// GetWindowWidth reveals the width of the windows used in the
+	// windowed integrators
+	GetWindowWidth() time.Duration
+
 	// ExtractIntegrators ensures that ints maps every current
-	// priority level's name to an IntegratorPair.  Irrelevant entries
-	// are not removed.
-	ExtractIntegrators(ints map[string]*fq.IntegratorPair)
+	// priority level's name to a WindowedIntegratorPair.  Irrelevant
+	// entries are not removed.
+	ExtractIntegrators(ints map[string]*fq.WindowedIntegratorPair)
 }
 
 // This request filter implements https://github.com/kubernetes/enhancements/blob/master/keps/sig-api-machinery/20190228-priority-and-fairness.md
@@ -66,6 +70,8 @@ func New(
 	flowcontrolClient fcclientv1a1.FlowcontrolV1alpha1Interface,
 	serverConcurrencyLimit int,
 	requestWaitLimit time.Duration,
+	statsWindowWidth time.Duration,
+	numStatsWindows int,
 ) Interface {
 	grc := counter.NoOp{}
 	return NewTestable(
@@ -73,6 +79,8 @@ func New(
 		flowcontrolClient,
 		serverConcurrencyLimit,
 		requestWaitLimit,
+		statsWindowWidth,
+		numStatsWindows,
 		fqs.NewQueueSetFactory(&clock.RealClock{}, grc),
 	)
 }
@@ -83,9 +91,11 @@ func NewTestable(
 	flowcontrolClient fcclientv1a1.FlowcontrolV1alpha1Interface,
 	serverConcurrencyLimit int,
 	requestWaitLimit time.Duration,
+	statsWindowWidth time.Duration,
+	numStatsWindows int,
 	queueSetFactory fq.QueueSetFactory,
 ) Interface {
-	return newTestableController(informerFactory, flowcontrolClient, serverConcurrencyLimit, requestWaitLimit, queueSetFactory)
+	return newTestableController(informerFactory, flowcontrolClient, serverConcurrencyLimit, requestWaitLimit, queueSetFactory, statsWindowWidth, numStatsWindows)
 }
 
 func (cfgCtl *configController) Handle(ctx context.Context, requestDigest RequestDigest,

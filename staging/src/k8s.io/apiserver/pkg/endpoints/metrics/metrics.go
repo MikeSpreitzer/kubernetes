@@ -34,6 +34,7 @@ import (
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/features"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
 	compbasemetrics "k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
 )
@@ -151,14 +152,41 @@ var (
 		[]string{"requestKind"},
 	)
 
-	// WindowStats from the last window
-	concurrencyGauges = compbasemetrics.NewGaugeVec(
+	// low and high concurrency watermarks from the last few windows
+	concurrencyWatermarks = compbasemetrics.NewGaugeVec(
 		&compbasemetrics.GaugeOpts{
-			Name:           "apiserver_current_inflight_request_measures",
-			Help:           "Stats on number of requests executing by mutating or not, measure.",
+			Name:           "apiserver_inflight_count_watermarks",
+			Help:           "Low and high watermark of mutating, readonly requests executing in recent windows.",
 			StabilityLevel: compbasemetrics.ALPHA,
 		},
-		[]string{"requestKind", "measure"},
+		[]string{"requestKind", "mark", "lag"},
+	)
+
+	concurrencyAverage = compbasemetrics.NewGaugeVec(
+		&compbasemetrics.GaugeOpts{
+			Name:           "apiserver_inflight_count_average",
+			Help:           "Average count of mutating, readonly requests executing during recent windows.",
+			StabilityLevel: compbasemetrics.ALPHA,
+		},
+		[]string{"requestKind"},
+	)
+
+	concurrencyStddev = compbasemetrics.NewGaugeVec(
+		&compbasemetrics.GaugeOpts{
+			Name:           "apiserver_inflight_count_stddev",
+			Help:           "Standard deviation of count of mutating, readonly requests executing during recent windows.",
+			StabilityLevel: compbasemetrics.ALPHA,
+		},
+		[]string{"requestKind"},
+	)
+
+	concurrencyIntegrals = compbasemetrics.NewCounterVec(
+		&compbasemetrics.CounterOpts{
+			Name:           "apiserver_inflight_count_integrals",
+			Help:           "Integrals of powers of count of mutating, readonly requests executing since process start.",
+			StabilityLevel: compbasemetrics.ALPHA,
+		},
+		[]string{"requestKind", "power"},
 	)
 
 	requestTerminationsTotal = compbasemetrics.NewCounterVec(
@@ -181,7 +209,10 @@ var (
 		WatchEvents,
 		WatchEventsSizes,
 		currentInflightRequests,
-		concurrencyGauges,
+		concurrencyWatermarks,
+		concurrencyAverage,
+		concurrencyStddev,
+		concurrencyIntegrals,
 		requestTerminationsTotal,
 	}
 
@@ -222,11 +253,6 @@ const (
 	ReadOnlyKind = "readOnly"
 	// MutatingKind is a string identifying mutating request kind
 	MutatingKind = "mutating"
-
-	MinMeasure    = "min"
-	MaxMeasure    = "max"
-	AvgMeasure    = "avg"
-	StdDevMeasure = "stddev"
 )
 
 var registerMetrics sync.Once
@@ -253,17 +279,35 @@ type WindowStats struct {
 	StandardDeviation float64
 }
 
-func UpdateInflightRequestMetrics(readOnly, mutating WindowStats) {
-	currentInflightRequests.WithLabelValues(ReadOnlyKind).Set(readOnly.Max)
-	currentInflightRequests.WithLabelValues(MutatingKind).Set(mutating.Max)
-	concurrencyGauges.WithLabelValues(ReadOnlyKind, MinMeasure).Set(readOnly.Min)
-	concurrencyGauges.WithLabelValues(MutatingKind, MinMeasure).Set(mutating.Min)
-	concurrencyGauges.WithLabelValues(ReadOnlyKind, MaxMeasure).Set(readOnly.Max)
-	concurrencyGauges.WithLabelValues(MutatingKind, MaxMeasure).Set(mutating.Max)
-	concurrencyGauges.WithLabelValues(ReadOnlyKind, AvgMeasure).Set(readOnly.Average)
-	concurrencyGauges.WithLabelValues(MutatingKind, AvgMeasure).Set(mutating.Average)
-	concurrencyGauges.WithLabelValues(ReadOnlyKind, StdDevMeasure).Set(readOnly.StandardDeviation)
-	concurrencyGauges.WithLabelValues(MutatingKind, StdDevMeasure).Set(mutating.StandardDeviation)
+// UpdateInflightRequestMetrics reports concurrency metrics divided by
+// mutating vs Readonly.  The previous metrics are needed because the
+// Prometheus counters used for the integrals-since-startup can only
+// be added to, not set.
+func UpdateInflightRequestMetrics(readOnly, readOnlyPrev, mutating, mutatingPrev *fq.WindowedIntegratorResults) {
+	for _, kr := range []struct {
+		kind          string
+		results, prev *fq.WindowedIntegratorResults
+	}{{ReadOnlyKind, readOnly, readOnlyPrev}, {MutatingKind, mutating, mutatingPrev}} {
+		currentInflightRequests.WithLabelValues(kr.kind).Set(kr.results.Max[1])
+		reportMarks(kr.results.Min, kr.kind, "low")
+		reportMarks(kr.results.Max, kr.kind, "high")
+		concurrencyAverage.WithLabelValues(kr.kind).Set(kr.results.Average)
+		concurrencyStddev.WithLabelValues(kr.kind).Set(kr.results.StandardDeviation)
+		for i, ix := range kr.results.Integrals {
+			var prev float64
+			if len(kr.prev.Integrals) > i {
+				prev = kr.prev.Integrals[i]
+			}
+			concurrencyIntegrals.WithLabelValues(kr.kind, strconv.Itoa(i)).Add(ix - prev)
+		}
+	}
+
+}
+
+func reportMarks(marks []float64, kind, mark string) {
+	for lag := 1; lag < len(marks); lag++ {
+		concurrencyWatermarks.WithLabelValues(kind, mark, strconv.Itoa(lag)).Set(marks[lag])
+	}
 }
 
 // RecordRequestTermination records that the request was terminated early as part of a resource

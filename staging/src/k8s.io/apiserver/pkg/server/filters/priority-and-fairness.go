@@ -22,12 +22,10 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	fcv1a1 "k8s.io/api/flowcontrol/v1alpha1"
 	apitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	epmetrics "k8s.io/apiserver/pkg/endpoints/metrics"
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
 	utilflowcontrol "k8s.io/apiserver/pkg/util/flowcontrol"
 	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
@@ -138,25 +136,27 @@ func WithPriorityAndFairness(
 	})
 }
 
-const windowWidth = 25 * time.Second
-
 func reportWindowedStats(fcIfc utilflowcontrol.Interface) {
-	ints := make(map[string]*fq.IntegratorPair)
-	statmm := make(map[string]map[string]*epmetrics.WindowStats)
+	ints := make(map[string]*fq.WindowedIntegratorPair)
+	statmm := make(map[string]map[string]*metrics.WindowedIntegratorResultsStep)
 	wait.Forever(func() {
 		fcIfc.ExtractIntegrators(ints)
 		for plName, ip := range ints {
 			statm := statmm[plName]
 			if statm == nil {
-				statm = map[string]*epmetrics.WindowStats{
+				statm = map[string]*metrics.WindowedIntegratorResultsStep{
 					metrics.WaitingPhase:   {},
 					metrics.ExecutingPhase: {},
 				}
 				statmm[plName] = statm
 			}
-			*statm[metrics.WaitingPhase] = convertWindowResults(ip.RequestsWaiting.Reset())
-			*statm[metrics.ExecutingPhase] = convertWindowResults(ip.RequestsExecuting.Reset())
+			w := statm[metrics.WaitingPhase]
+			w.Previous = w.Current
+			w.Current = ip.RequestsWaiting.GetResults(w.Previous.Min, w.Previous.Max)
+			e := statm[metrics.ExecutingPhase]
+			e.Previous = e.Current
+			e.Current = ip.RequestsExecuting.GetResults(e.Previous.Min, e.Previous.Max)
 		}
 		metrics.SetWindowedRequestStats(statmm)
-	}, windowWidth)
+	}, fcIfc.GetWindowWidth())
 }
