@@ -486,6 +486,13 @@ type PriorityLevelConfigurationStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []PriorityLevelConfigurationCondition `json:"conditions,omitempty" protobuf:"bytes,1,rep,name=conditions"`
+
+	// `concurrencyLimits` indicates the concurrency limit that each
+	// apiserver is enforcing for this priority level.
+	// +listType=map
+	// +listMapKey=apiServer
+	// +optional
+	ConcurrencyLimits []ConcurrencyLimitStatus `json:"concurrencyLimits,omitempty" protobuf:"bytes,2,rep,name=concurrencyLimits"`
 }
 
 // PriorityLevelConfigurationCondition defines the condition of priority level.
@@ -517,3 +524,14 @@ const (
 	ConditionFalse   ConditionStatus = "False"
 	ConditionUnknown ConditionStatus = "Unknown"
 )
+
+// ConcurrencyLimitStatus reports the limit imposed by one apiserver.
+type ConcurrencyLimitStatus struct {
+	// APIServer is a unique identifier for the apiserver reporting this limit
+	APIServer string `json:"apiServer" protobuf:"bytes,1,name=apiServer"`
+
+	// Limit is imposed by the identified apiserver on the number of
+	// concurrently executing requests of the relevant priority level,
+	// or `nil` if no limit is being imposed.
+	Limit *int32 `json:"limit" protobuf:"varint,2,name=limit"`
+}

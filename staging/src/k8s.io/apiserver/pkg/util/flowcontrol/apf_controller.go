@@ -23,17 +23,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/pkg/errors"
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	apitypes "k8s.io/apimachinery/pkg/types"
-	apierrors "k8s.io/apimachinery/pkg/util/errors"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	fcboot "k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap"
 	"k8s.io/apiserver/pkg/authentication/user"
@@ -107,20 +110,43 @@ type configController struct {
 	// requestWaitLimit comes from server configuration.
 	requestWaitLimit time.Duration
 
+	// id is the identifier used for this apiserver in ConcurrencyLimitStatus
+	id string
+
 	// This must be locked while accessing flowSchemas or
 	// priorityLevelStates.  It is the lock involved in
 	// LockingWriteMultiple.
 	lock sync.Mutex
 
 	// flowSchemas holds the flow schema objects, sorted by increasing
-	// numerical (decreasing logical) matching precedence.  Every
-	// FlowSchema in this slice is immutable.
+	// numerical (decreasing logical) matching precedence.  This field
+	// is mutable; every slice stored in it is deeply immutable.
 	flowSchemas apihelpers.FlowSchemaSequence
 
 	// priorityLevelStates maps the PriorityLevelConfiguration object
 	// name to the state for that level.  Every name referenced from a
 	// member of `flowSchemas` has an entry here.
 	priorityLevelStates map[string]*priorityLevelState
+
+	// Identifies the set of PriorityLevelConfigurationSpecs last
+	// processed by digestConfigObjects, as a map from UID to
+	// Generation.  This field is only accessed by
+	// digestConfigObjects, all of whose invocations are totally
+	// ordered.  This field is used to avoid repeating identical work.
+	priorityLevelGenerations map[apitypes.UID]int64
+
+	// Identifies the set of FlowSchemaSpecs last processed by
+	// digestConfigObjects, as a map from UID to Generation.  This
+	// field is only accessed by digestConfigObjects, all of whose
+	// invocations are totally ordered.  This field is used to avoid
+	// repeating identical work.
+	flowSchemaGenerations map[apitypes.UID]int64
+
+	// Identifies the concurrency limits being enforced.  This field
+	// is only accessed by digestConfigObjects, all of whose
+	// invocations are totally ordered.  This field is used to avoid
+	// repeating identical work.
+	plConcurrencyLimits map[string]*int32
 }
 
 // priorityLevelState holds the state specific to a priority level.
@@ -165,13 +191,51 @@ func newTestableController(
 		serverConcurrencyLimit: serverConcurrencyLimit,
 		requestWaitLimit:       requestWaitLimit,
 		flowcontrolClient:      flowcontrolClient,
+		id:                     makeID(),
 		priorityLevelStates:    make(map[string]*priorityLevelState),
 	}
-	klog.V(2).Infof("NewTestableController with serverConcurrencyLimit=%d, requestWaitLimit=%s", serverConcurrencyLimit, requestWaitLimit)
+	klog.V(2).Infof("NewTestableController with id=%q, serverConcurrencyLimit=%d, requestWaitLimit=%s", cfgCtlr.id, serverConcurrencyLimit, requestWaitLimit)
 	cfgCtlr.initializeConfigController(informerFactory)
 	// ensure the data structure reflects the mandatory config
 	cfgCtlr.lockAndDigestConfigObjects(nil, nil)
 	return cfgCtlr
+}
+
+// makeID computes the ID to use for this apiserver in
+// PriorityLevelConfigurationStatus::ConcurrencyLimits.  If possible
+// it will be based on `net.InterfaceAddrs`, consisting of a hash of
+// all of them plus one of the distinctive ones.  If that is not
+// possible then the ID will be a timestamp of maximum precision.
+func makeID() string {
+	addrs, err := net.InterfaceAddrs()
+	klog.V(3).Infof("Got addrs=%#+v, err=%#+v from net.InterfaceAddrs()", addrs, err)
+	if err == nil && len(addrs) > 0 {
+		hasher := sha256.New()
+		var aGoodOne string
+		for _, addr := range addrs {
+			netS := addr.Network()
+			addrS := addr.String()
+			hasher.Write([]byte(addrS))
+			var ip net.IP
+			if ipa, err := net.ResolveIPAddr(netS, addrS); ipa != nil && err == nil {
+				ip = ipa.IP
+			} else if ipa, _, err := net.ParseCIDR(addrS); ipa != nil && err == nil {
+				ip = ipa
+			} else if ip = net.ParseIP(addrS); ip == nil {
+				continue
+			}
+			if ip.IsGlobalUnicast() && len(aGoodOne) == 0 {
+				aGoodOne = ip.String()
+			}
+		}
+		if len(aGoodOne) > 0 {
+			var hashi [32]byte
+			hasho := hasher.Sum(hashi[:0])
+			hash := binary.BigEndian.Uint64(hasho[0:8])
+			return strconv.FormatUint(hash, 10) + "-" + aGoodOne
+		}
+	}
+	return strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
 // initializeConfigController sets up the controller that processes
@@ -285,6 +349,26 @@ func (cfgCtlr *configController) syncOne() bool {
 	return false
 }
 
+func (cfgCtlr *configController) isNews(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) bool {
+	if len(newPLs) != len(cfgCtlr.priorityLevelGenerations) {
+		return true
+	}
+	for _, pl := range newPLs {
+		if pl.Generation != cfgCtlr.priorityLevelGenerations[pl.UID] {
+			return true
+		}
+	}
+	if len(newFSs) != len(cfgCtlr.flowSchemaGenerations) {
+		return true
+	}
+	for _, fs := range newFSs {
+		if fs.Generation != cfgCtlr.flowSchemaGenerations[fs.UID] {
+			return true
+		}
+	}
+	return false
+}
+
 // cfgMeal is the data involved in the process of digesting the API
 // objects that configure API Priority and Fairness.  All the config
 // objects are digested together, because this is the simplest way to
@@ -311,6 +395,10 @@ type cfgMeal struct {
 	// provoking a call into this controller while the lock held
 	// waiting on that request to complete.
 	fsStatusUpdates []fsStatusUpdate
+
+	// The concurrency limits to be enforced.  The map is deeply
+	// immutable after return from lockAndDigestConfigObjects.
+	plConcurrencyLimits map[string]*int32
 }
 
 // A buffered set of status updates for a FlowSchema
@@ -323,7 +411,20 @@ type fsStatusUpdate struct {
 // digestConfigObjects is given all the API objects that configure
 // cfgCtlr and writes its consequent new configState.
 func (cfgCtlr *configController) digestConfigObjects(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) error {
-	fsStatusUpdates := cfgCtlr.lockAndDigestConfigObjects(newPLs, newFSs)
+	var errs []error
+	if cfgCtlr.isNews(newPLs, newFSs) {
+		var fsStatusUpdates []fsStatusUpdate
+		fsStatusUpdates, cfgCtlr.plConcurrencyLimits = cfgCtlr.lockAndDigestConfigObjects(newPLs, newFSs)
+		errs = cfgCtlr.doFSStatusUpdates(fsStatusUpdates)
+	}
+	errs = append(errs, cfgCtlr.doPLCStatusUpdates(newPLs, cfgCtlr.plConcurrencyLimits)...)
+	if len(errs) == 0 {
+		return nil
+	}
+	return utilerrors.NewAggregate(errs)
+}
+
+func (cfgCtlr *configController) doFSStatusUpdates(fsStatusUpdates []fsStatusUpdate) []error {
 	var errs []error
 	for _, fsu := range fsStatusUpdates {
 		enc, err := json.Marshal(fsu.condition)
@@ -333,23 +434,60 @@ func (cfgCtlr *configController) digestConfigObjects(newPLs []*fctypesv1a1.Prior
 		}
 		klog.V(4).Infof("Writing Condition %s to FlowSchema %s because its previous value was %s", string(enc), fsu.flowSchema.Name, fcfmt.Fmt(fsu.oldValue))
 		_, err = cfgCtlr.flowcontrolClient.FlowSchemas().Patch(context.TODO(), fsu.flowSchema.Name, apitypes.StrategicMergePatchType, []byte(fmt.Sprintf(`{"status": {"conditions": [ %s ] } }`, string(enc))), metav1.PatchOptions{FieldManager: "api-priority-and-fairness-config-consumer-v1"}, "status")
-		if err != nil {
+		if err != nil && !apierrors.IsNotFound(err) {
 			errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to set a status.condition for FlowSchema %s", fsu.flowSchema.Name)))
 		}
 	}
-	if len(errs) == 0 {
-		return nil
-	}
-	return apierrors.NewAggregate(errs)
+	return errs
 }
 
-func (cfgCtlr *configController) lockAndDigestConfigObjects(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) []fsStatusUpdate {
+func (cfgCtlr *configController) doPLCStatusUpdates(newPLs []*fctypesv1a1.PriorityLevelConfiguration, plConcurrencyLimits map[string]*int32) []error {
+	var errs []error
+	for _, pl := range newPLs {
+		newLimit := plConcurrencyLimits[pl.Name]
+		oldStatus := getPLConcurrencyLimit(pl, cfgCtlr.id)
+		if oldStatus != nil && (newLimit == oldStatus.Limit || newLimit != nil && oldStatus.Limit != nil && *newLimit == *oldStatus.Limit) {
+			continue
+		}
+		plStatus := fctypesv1a1.PriorityLevelConfigurationStatus{
+			ConcurrencyLimits: []fctypesv1a1.ConcurrencyLimitStatus{{
+				APIServer: cfgCtlr.id,
+				Limit:     newLimit,
+			}},
+		}
+		enc, err := json.Marshal(plStatus)
+		if err != nil {
+			// should never happen because these are created here and well formed
+			panic(fmt.Sprintf("Failed to json.Marshall(%#+v): %s", plStatus, err.Error()))
+		}
+		klog.V(4).Infof("Writing %s to PriorityLevelConfiguration %s because the previous value was %s", string(enc), pl.Name, fcfmt.Fmt(oldStatus))
+		_, err = cfgCtlr.flowcontrolClient.PriorityLevelConfigurations().Patch(context.TODO(), pl.Name, apitypes.StrategicMergePatchType, []byte(fmt.Sprintf(`{"status": %s }`, string(enc))), metav1.PatchOptions{FieldManager: "api-priority-and-fairness-config-consumer-v1"}, "status")
+		if err != nil && !apierrors.IsNotFound(err) {
+			errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to set a ConcurrencyLimitStatus for PriorityLevelConfiguration %s", pl.Name)))
+		}
+	}
+	return errs
+}
+
+func getPLConcurrencyLimit(pl *fctypesv1a1.PriorityLevelConfiguration, id string) *fctypesv1a1.ConcurrencyLimitStatus {
+	for _, cl := range pl.Status.ConcurrencyLimits {
+		if cl.APIServer == id {
+			return &cl
+		}
+	}
+	return nil
+}
+
+func (cfgCtlr *configController) lockAndDigestConfigObjects(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) ([]fsStatusUpdate, map[string]*int32) {
 	cfgCtlr.lock.Lock()
 	defer cfgCtlr.lock.Unlock()
 	meal := cfgMeal{
-		cfgCtlr:     cfgCtlr,
-		newPLStates: make(map[string]*priorityLevelState),
+		cfgCtlr:             cfgCtlr,
+		newPLStates:         make(map[string]*priorityLevelState, len(newPLs)),
+		plConcurrencyLimits: make(map[string]*int32, len(newPLs)),
 	}
+	cfgCtlr.priorityLevelGenerations = make(map[apitypes.UID]int64, len(newPLs))
+	cfgCtlr.flowSchemaGenerations = make(map[apitypes.UID]int64, len(newFSs))
 
 	meal.digestNewPLsLocked(newPLs)
 	meal.digestFlowSchemasLocked(newFSs)
@@ -368,13 +506,14 @@ func (cfgCtlr *configController) lockAndDigestConfigObjects(newPLs []*fctypesv1a
 	// The new config has been constructed
 	cfgCtlr.priorityLevelStates = meal.newPLStates
 	klog.V(5).Infof("Switched to new API Priority and Fairness configuration")
-	return meal.fsStatusUpdates
+	return meal.fsStatusUpdates, meal.plConcurrencyLimits
 }
 
 // Digest the new set of PriorityLevelConfiguration objects.
 // Pretend broken ones do not exist.
 func (meal *cfgMeal) digestNewPLsLocked(newPLs []*fctypesv1a1.PriorityLevelConfiguration) {
 	for _, pl := range newPLs {
+		meal.cfgCtlr.priorityLevelGenerations[pl.UID] = pl.Generation
 		state := meal.cfgCtlr.priorityLevelStates[pl.Name]
 		if state == nil {
 			state = &priorityLevelState{obsPair: meal.cfgCtlr.obsPairGenerator.Generate(1, 1, []string{pl.Name})}
@@ -411,6 +550,7 @@ func (meal *cfgMeal) digestFlowSchemasLocked(newFSs []*fctypesv1a1.FlowSchema) {
 	fsMap := make(map[string]*fctypesv1a1.FlowSchema, len(newFSs))
 	var haveExemptFS, haveCatchAllFS bool
 	for i, fs := range newFSs {
+		meal.cfgCtlr.flowSchemaGenerations[fs.UID] = fs.Generation
 		otherFS := fsMap[fs.Name]
 		if otherFS != nil {
 			// This client is forbidden to do this.
@@ -509,6 +649,7 @@ func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 	for plName, plState := range meal.newPLStates {
 		if plState.pl.Spec.Limited == nil {
 			klog.V(5).Infof("Using exempt priority level %q: quiescing=%v", plName, plState.quiescing)
+			meal.plConcurrencyLimits[plName] = nil
 			continue
 		}
 
@@ -516,6 +657,8 @@ func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 		// to a little more than serverConcurrencyLimit but the
 		// difference will be negligible.
 		concurrencyLimit := int(math.Ceil(float64(meal.cfgCtlr.serverConcurrencyLimit) * float64(plState.pl.Spec.Limited.AssuredConcurrencyShares) / meal.shareSum))
+		cl32 := int32(concurrencyLimit)
+		meal.plConcurrencyLimits[plName] = &cl32
 		metrics.UpdateSharedConcurrencyLimit(plName, concurrencyLimit)
 
 		if plState.queues == nil {

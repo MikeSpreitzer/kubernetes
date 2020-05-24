@@ -62,6 +62,8 @@ func (sr Stringer) String() string {
 		fcv1a1.PriorityLevelConfigurationSpec,
 		*fcv1a1.LimitedPriorityLevelConfiguration,
 		fcv1a1.LimitedPriorityLevelConfiguration,
+		*fcv1a1.ConcurrencyLimitStatus,
+		fcv1a1.ConcurrencyLimitStatus,
 		fcv1a1.LimitResponse,
 		*fcv1a1.QueuingConfiguration,
 		fcv1a1.QueuingConfiguration:
