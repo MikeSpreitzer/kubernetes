@@ -486,6 +486,13 @@ type PriorityLevelConfigurationStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []PriorityLevelConfigurationCondition
+
+	// `concurrencyLimits` indicates the concurrency limit that each
+	// apiserver is enforcing for this priority level.
+	// +listType=map
+	// +listMapKey=apiServer
+	// +optional
+	ConcurrencyLimits []ConcurrencyLimitStatus
 }
 
 // PriorityLevelConfigurationCondition defines the condition of priority level.
@@ -517,3 +524,14 @@ const (
 	ConditionFalse   ConditionStatus = "False"
 	ConditionUnknown ConditionStatus = "Unknown"
 )
+
+// ConcurrencyLimitStatus reports the limit imposed by one apiserver.
+type ConcurrencyLimitStatus struct {
+	// APIServer is a unique identifier for the apiserver reporting this limit
+	APIServer string
+
+	// Limit is imposed by the identified apiserver on the number of
+	// concurrently executing requests of the relevant priority level,
+	// or `nil` if no limit is being imposed.
+	Limit *int32
+}
