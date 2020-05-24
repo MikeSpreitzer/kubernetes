@@ -5160,6 +5160,10 @@ func TestPrintFlowSchema(t *testing.T) {
 	}
 }
 
+func iptr(i int32) *int32 {
+	return &i
+}
+
 func TestPrintPriorityLevelConfiguration(t *testing.T) {
 	tests := []struct {
 		pl       flowcontrol.PriorityLevelConfiguration
@@ -5175,8 +5179,84 @@ func TestPrintPriorityLevelConfiguration(t *testing.T) {
 					Type: flowcontrol.PriorityLevelEnablementExempt,
 				},
 			},
-			// Columns: Name, Type, AssuredConcurrencyShares, Queues, HandSize, QueueLengthLimit, Age
-			expected: []metav1.TableRow{{Cells: []interface{}{"unlimited", "Exempt", "<none>", "<none>", "<none>", "<none>", "0s"}}},
+			// Columns: Name, Type, AssuredConcurrencyShares, Queues, HandSize, QueueLengthLimit, Age, ConcurrencyLimit
+			expected: []metav1.TableRow{{Cells: []interface{}{"unlimited", "Exempt", "<none>", "<none>", "<none>", "<none>", "0s", ""}}},
+		},
+		{
+			pl: flowcontrol.PriorityLevelConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "unlimited",
+					CreationTimestamp: metav1.Time{Time: time.Now().Add(1.9e9)},
+				},
+				Spec: flowcontrol.PriorityLevelConfigurationSpec{
+					Type: flowcontrol.PriorityLevelEnablementExempt,
+				},
+				Status: flowcontrol.PriorityLevelConfigurationStatus{
+					ConcurrencyLimits: []flowcontrol.ConcurrencyLimitStatus{
+						{APIServer: "a", Limit: nil},
+					},
+				},
+			},
+			// Columns: Name, Type, AssuredConcurrencyShares, Queues, HandSize, QueueLengthLimit, Age, ConcurrencyLimit
+			expected: []metav1.TableRow{{Cells: []interface{}{"unlimited", "Exempt", "<none>", "<none>", "<none>", "<none>", "0s", "nil"}}},
+		},
+		{
+			pl: flowcontrol.PriorityLevelConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "unlimited",
+					CreationTimestamp: metav1.Time{Time: time.Now().Add(1.9e9)},
+				},
+				Spec: flowcontrol.PriorityLevelConfigurationSpec{
+					Type: flowcontrol.PriorityLevelEnablementExempt,
+				},
+				Status: flowcontrol.PriorityLevelConfigurationStatus{
+					ConcurrencyLimits: []flowcontrol.ConcurrencyLimitStatus{
+						{APIServer: "a", Limit: iptr(86)},
+					},
+				},
+			},
+			// Columns: Name, Type, AssuredConcurrencyShares, Queues, HandSize, QueueLengthLimit, Age, ConcurrencyLimit
+			expected: []metav1.TableRow{{Cells: []interface{}{"unlimited", "Exempt", "<none>", "<none>", "<none>", "<none>", "0s", "86"}}},
+		},
+		{
+			pl: flowcontrol.PriorityLevelConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "unlimited",
+					CreationTimestamp: metav1.Time{Time: time.Now().Add(1.9e9)},
+				},
+				Spec: flowcontrol.PriorityLevelConfigurationSpec{
+					Type: flowcontrol.PriorityLevelEnablementExempt,
+				},
+				Status: flowcontrol.PriorityLevelConfigurationStatus{
+					ConcurrencyLimits: []flowcontrol.ConcurrencyLimitStatus{
+						{APIServer: "a", Limit: iptr(86)},
+						{APIServer: "b", Limit: iptr(99)},
+					},
+				},
+			},
+			// Columns: Name, Type, AssuredConcurrencyShares, Queues, HandSize, QueueLengthLimit, Age, ConcurrencyLimit
+			expected: []metav1.TableRow{{Cells: []interface{}{"unlimited", "Exempt", "<none>", "<none>", "<none>", "<none>", "0s", "86-99"}}},
+		},
+		{
+			pl: flowcontrol.PriorityLevelConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "unlimited",
+					CreationTimestamp: metav1.Time{Time: time.Now().Add(1.9e9)},
+				},
+				Spec: flowcontrol.PriorityLevelConfigurationSpec{
+					Type: flowcontrol.PriorityLevelEnablementExempt,
+				},
+				Status: flowcontrol.PriorityLevelConfigurationStatus{
+					ConcurrencyLimits: []flowcontrol.ConcurrencyLimitStatus{
+						{APIServer: "b", Limit: iptr(99)},
+						{APIServer: "a", Limit: iptr(86)},
+						{APIServer: "c", Limit: nil},
+						{APIServer: "d", Limit: iptr(95)},
+					},
+				},
+			},
+			// Columns: Name, Type, AssuredConcurrencyShares, Queues, HandSize, QueueLengthLimit, Age, ConcurrencyLimit
+			expected: []metav1.TableRow{{Cells: []interface{}{"unlimited", "Exempt", "<none>", "<none>", "<none>", "<none>", "0s", "nil,86-99"}}},
 		},
 		{
 			pl: flowcontrol.PriorityLevelConfiguration{
@@ -5194,8 +5274,8 @@ func TestPrintPriorityLevelConfiguration(t *testing.T) {
 					},
 				},
 			},
-			// Columns: Name, Type, AssuredConcurrencyShares, Queues, HandSize, QueueLengthLimit, Age
-			expected: []metav1.TableRow{{Cells: []interface{}{"unqueued", "Limited", int32(47), "<none>", "<none>", "<none>", "0s"}}},
+			// Columns: Name, Type, AssuredConcurrencyShares, Queues, HandSize, QueueLengthLimit, Age, ConcurrencyLimit
+			expected: []metav1.TableRow{{Cells: []interface{}{"unqueued", "Limited", int32(47), "<none>", "<none>", "<none>", "0s", ""}}},
 		},
 		{
 			pl: flowcontrol.PriorityLevelConfiguration{
@@ -5218,8 +5298,8 @@ func TestPrintPriorityLevelConfiguration(t *testing.T) {
 					},
 				},
 			},
-			// Columns: Name, Type, AssuredConcurrencyShares, Queues, HandSize, QueueLengthLimit, Age
-			expected: []metav1.TableRow{{Cells: []interface{}{"queued", "Limited", int32(42), int32(8), int32(3), int32(4), "0s"}}},
+			// Columns: Name, Type, AssuredConcurrencyShares, Queues, HandSize, QueueLengthLimit, Age, ConcurrencyLimit
+			expected: []metav1.TableRow{{Cells: []interface{}{"queued", "Limited", int32(42), int32(8), int32(3), int32(4), "0s", ""}}},
 		},
 	}
 

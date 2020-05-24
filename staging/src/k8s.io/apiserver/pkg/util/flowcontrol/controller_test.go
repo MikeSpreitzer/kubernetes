@@ -285,7 +285,7 @@ func TestConfigConsumer(t *testing.T) {
 				for _, newFS := range newFSs {
 					t.Logf("For %s, digesting newFS=%s", trialStep, fcfmt.Fmt(newFS))
 				}
-				_ = ctl.lockAndDigestConfigObjects(newPLs, newFSs)
+				_, _ = ctl.lockAndDigestConfigObjects(newPLs, newFSs)
 			}
 			for plName, hr, nCount := cts.popHeldRequest(); hr != nil; plName, hr, nCount = cts.popHeldRequest() {
 				desired := desiredPLNames.Has(plName) || mandPLs[plName] != nil

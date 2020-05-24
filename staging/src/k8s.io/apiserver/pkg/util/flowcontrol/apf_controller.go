@@ -23,7 +23,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -106,6 +109,9 @@ type configController struct {
 	// requestWaitLimit comes from server configuration.
 	requestWaitLimit time.Duration
 
+	// id is the identifier used for this apiserver in ConcurrencyLimitStatus
+	id string
+
 	// This must be locked while accessing flowSchemas or
 	// priorityLevelStates.  It is the lock involved in
 	// LockingWriteMultiple.
@@ -159,6 +165,7 @@ func newTestableController(
 		serverConcurrencyLimit: serverConcurrencyLimit,
 		requestWaitLimit:       requestWaitLimit,
 		flowcontrolClient:      flowcontrolClient,
+		id:                     makeID(),
 		priorityLevelStates:    make(map[string]*priorityLevelState),
 	}
 	klog.V(2).Infof("NewTestableController with serverConcurrencyLimit=%d, requestWaitLimit=%s", serverConcurrencyLimit, requestWaitLimit)
@@ -166,6 +173,22 @@ func newTestableController(
 	// ensure the data structure reflects the mandatory config
 	cfgCtl.lockAndDigestConfigObjects(nil, nil)
 	return cfgCtl
+}
+
+func makeID() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil || len(addrs) == 0 {
+		return strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	var buffer strings.Builder
+	for i, addr := range addrs {
+		addrS := addr.String()
+		if i > 0 {
+			buffer.WriteString(",")
+		}
+		buffer.WriteString(addrS)
+	}
+	return buffer.String()
 }
 
 // initializeConfigController sets up the controller that processes
@@ -305,6 +328,10 @@ type cfgMeal struct {
 	// provoking a call into this controller while the lock held
 	// waiting on that request to complete.
 	fsStatusUpdates []fsStatusUpdate
+
+	// plConcurrencyLimits reports on the currency limits to be
+	// enforced.  Immutable after construction.
+	plConcurrencyLimits map[string]*int32
 }
 
 // A buffered set of status updates for a FlowSchema
@@ -317,7 +344,7 @@ type fsStatusUpdate struct {
 // digestConfigObjects is given all the API objects that configure
 // cfgCtl and writes its consequent new configState.
 func (cfgCtl *configController) digestConfigObjects(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) error {
-	fsStatusUpdates := cfgCtl.lockAndDigestConfigObjects(newPLs, newFSs)
+	fsStatusUpdates, plConcurrencyLimits := cfgCtl.lockAndDigestConfigObjects(newPLs, newFSs)
 	var errs []error
 	for _, fsu := range fsStatusUpdates {
 		enc, err := json.Marshal(fsu.condition)
@@ -331,18 +358,51 @@ func (cfgCtl *configController) digestConfigObjects(newPLs []*fctypesv1a1.Priori
 			errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to set a status.condition for FlowSchema %s", fsu.flowSchema.Name)))
 		}
 	}
+	for _, pl := range newPLs {
+		newLimit := plConcurrencyLimits[pl.Name]
+		oldStatus := getPLConcurrencyLimit(pl, cfgCtl.id)
+		if oldStatus != nil && (newLimit == oldStatus.Limit || newLimit != nil && oldStatus.Limit != nil && *newLimit == *oldStatus.Limit) {
+			continue
+		}
+		plStatus := fctypesv1a1.PriorityLevelConfigurationStatus{
+			ConcurrencyLimits: []fctypesv1a1.ConcurrencyLimitStatus{{
+				APIServer: cfgCtl.id,
+				Limit:     newLimit,
+			}},
+		}
+		enc, err := json.Marshal(plStatus)
+		if err != nil {
+			// should never happen because these are created here and well formed
+			panic(fmt.Sprintf("Failed to json.Marshall(%#+v): %s", plStatus, err.Error()))
+		}
+		klog.V(4).Infof("Writing %s to PriorityLevelConfiguration %s because the previous value was %s", string(enc), pl.Name, fcfmt.Fmt(oldStatus))
+		_, err = cfgCtl.flowcontrolClient.PriorityLevelConfigurations().Patch(context.TODO(), pl.Name, apitypes.StrategicMergePatchType, []byte(fmt.Sprintf(`{"status": %s }`, string(enc))), metav1.PatchOptions{FieldManager: "api-priority-and-fairness-config-consumer-v1"}, "status")
+		if err != nil {
+			errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to set a ConcurrencyLimitStatus for PriorityLevelConfiguration %s", pl.Name)))
+		}
+	}
 	if len(errs) == 0 {
 		return nil
 	}
 	return apierrors.NewAggregate(errs)
 }
 
-func (cfgCtl *configController) lockAndDigestConfigObjects(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) []fsStatusUpdate {
+func getPLConcurrencyLimit(pl *fctypesv1a1.PriorityLevelConfiguration, id string) *fctypesv1a1.ConcurrencyLimitStatus {
+	for _, cl := range pl.Status.ConcurrencyLimits {
+		if cl.APIServer == id {
+			return &cl
+		}
+	}
+	return nil
+}
+
+func (cfgCtl *configController) lockAndDigestConfigObjects(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) ([]fsStatusUpdate, map[string]*int32) {
 	cfgCtl.lock.Lock()
 	defer cfgCtl.lock.Unlock()
 	meal := cfgMeal{
-		cfgCtl:      cfgCtl,
-		newPLStates: make(map[string]*priorityLevelState),
+		cfgCtl:              cfgCtl,
+		newPLStates:         make(map[string]*priorityLevelState),
+		plConcurrencyLimits: make(map[string]*int32),
 	}
 
 	meal.digestNewPLsLocked(newPLs)
@@ -362,7 +422,7 @@ func (cfgCtl *configController) lockAndDigestConfigObjects(newPLs []*fctypesv1a1
 	// The new config has been constructed
 	cfgCtl.priorityLevelStates = meal.newPLStates
 	klog.V(5).Infof("Switched to new API Priority and Fairness configuration")
-	return meal.fsStatusUpdates
+	return meal.fsStatusUpdates, meal.plConcurrencyLimits
 }
 
 // Digest the new set of PriorityLevelConfiguration objects.
@@ -503,6 +563,7 @@ func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 	for plName, plState := range meal.newPLStates {
 		if plState.pl.Spec.Limited == nil {
 			klog.V(5).Infof("Using exempt priority level %q: quiescing=%v", plName, plState.quiescing)
+			meal.plConcurrencyLimits[plName] = nil
 			continue
 		}
 
@@ -510,6 +571,8 @@ func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 		// to a little more than serverConcurrencyLimit but the
 		// difference will be negligible.
 		concurrencyLimit := int(math.Ceil(float64(meal.cfgCtl.serverConcurrencyLimit) * float64(plState.pl.Spec.Limited.AssuredConcurrencyShares) / meal.shareSum))
+		cl32 := int32(concurrencyLimit)
+		meal.plConcurrencyLimits[plName] = &cl32
 		metrics.UpdateSharedConcurrencyLimit(plName, concurrencyLimit)
 
 		if plState.queues == nil {
