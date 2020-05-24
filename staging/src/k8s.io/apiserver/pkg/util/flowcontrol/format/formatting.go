@@ -62,6 +62,8 @@ func (sr Stringer) String() string {
 		flowcontrol.PriorityLevelConfigurationSpec,
 		*flowcontrol.LimitedPriorityLevelConfiguration,
 		flowcontrol.LimitedPriorityLevelConfiguration,
+		*flowcontrol.ConcurrencyLimitStatus,
+		flowcontrol.ConcurrencyLimitStatus,
 		flowcontrol.LimitResponse,
 		*flowcontrol.QueuingConfiguration,
 		flowcontrol.QueuingConfiguration:
