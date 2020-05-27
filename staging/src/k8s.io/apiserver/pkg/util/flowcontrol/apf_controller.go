@@ -37,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	apitypes "k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
 	fcboot "k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap"
 	"k8s.io/apiserver/pkg/authentication/user"
@@ -183,6 +184,7 @@ func newTestableController(
 	serverConcurrencyLimit int,
 	requestWaitLimit time.Duration,
 	obsPairGenerator metrics.TimedObserverPairGenerator,
+	idHint net.IP,
 	queueSetFactory fq.QueueSetFactory,
 ) *configController {
 	cfgCtlr := &configController{
@@ -191,7 +193,7 @@ func newTestableController(
 		serverConcurrencyLimit: serverConcurrencyLimit,
 		requestWaitLimit:       requestWaitLimit,
 		flowcontrolClient:      flowcontrolClient,
-		id:                     makeID(),
+		id:                     makeID(idHint),
 		priorityLevelStates:    make(map[string]*priorityLevelState),
 	}
 	klog.V(2).Infof("NewTestableController with id=%q, serverConcurrencyLimit=%d, requestWaitLimit=%s", cfgCtlr.id, serverConcurrencyLimit, requestWaitLimit)
@@ -202,38 +204,14 @@ func newTestableController(
 }
 
 // makeID computes the ID to use for this apiserver in
-// PriorityLevelConfigurationStatus::ConcurrencyLimits.  If possible
-// it will be based on `net.InterfaceAddrs`, consisting of a hash of
-// all of them plus one of the distinctive ones.  If that is not
-// possible then the ID will be a timestamp of maximum precision.
-func makeID() string {
-	addrs, err := net.InterfaceAddrs()
-	klog.V(3).Infof("Got addrs=%#+v, err=%#+v from net.InterfaceAddrs()", addrs, err)
-	if err == nil && len(addrs) > 0 {
-		hasher := sha256.New()
-		var aGoodOne string
-		for _, addr := range addrs {
-			netS := addr.Network()
-			addrS := addr.String()
-			hasher.Write([]byte(addrS))
-			var ip net.IP
-			if ipa, err := net.ResolveIPAddr(netS, addrS); ipa != nil && err == nil {
-				ip = ipa.IP
-			} else if ipa, _, err := net.ParseCIDR(addrS); ipa != nil && err == nil {
-				ip = ipa
-			} else if ip = net.ParseIP(addrS); ip == nil {
-				continue
-			}
-			if ip.IsGlobalUnicast() && len(aGoodOne) == 0 {
-				aGoodOne = ip.String()
-			}
+// PriorityLevelConfigurationStatus::ConcurrencyLimits.
+func makeID(idHint net.IP) string {
+	if len(idHint) > 0 {
+		ip, err := utilnet.ResolveBindAddress(idHint)
+		if err == nil {
+			return ip.String()
 		}
-		if len(aGoodOne) > 0 {
-			var hashi [32]byte
-			hasho := hasher.Sum(hashi[:0])
-			hash := binary.BigEndian.Uint64(hasho[0:8])
-			return strconv.FormatUint(hash, 10) + "-" + aGoodOne
-		}
+		klog.Infof("Will use timestamp because unable to resolve idHint address %s: %s", idHint, err.Error())
 	}
 	return strconv.FormatInt(time.Now().UnixNano(), 10)
 }

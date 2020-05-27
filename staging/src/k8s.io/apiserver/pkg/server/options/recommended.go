@@ -129,6 +129,7 @@ func (o *RecommendedOptions) ApplyTo(config *server.RecommendedConfig) error {
 			kubernetes.NewForConfigOrDie(config.ClientConfig).FlowcontrolV1alpha1(),
 			config.MaxRequestsInFlight+config.MaxMutatingRequestsInFlight,
 			config.RequestTimeout/4,
+			o.SecureServing.BindAddress,
 		)
 	}
 	return nil

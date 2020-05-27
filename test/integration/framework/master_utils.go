@@ -196,11 +196,16 @@ func startMasterOrDie(masterConfig *master.Config, incomingServer *httptest.Serv
 	masterConfig.ExtraConfig.VersionedInformers = informers.NewSharedInformerFactory(clientset, masterConfig.GenericConfig.LoopbackClientConfig.Timeout)
 
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIPriorityAndFairness) {
+		var idHint net.IP
+		if listenAddr, ok := masterConfig.GenericConfig.SecureServing.Listener.Addr().(*net.TCPAddr); ok {
+			idHint = listenAddr.IP
+		}
 		masterConfig.GenericConfig.FlowControl = utilflowcontrol.New(
 			masterConfig.ExtraConfig.VersionedInformers,
 			clientset.FlowcontrolV1alpha1(),
 			masterConfig.GenericConfig.MaxRequestsInFlight+masterConfig.GenericConfig.MaxMutatingRequestsInFlight,
 			masterConfig.GenericConfig.RequestTimeout/4,
+			idHint,
 		)
 	}
 
