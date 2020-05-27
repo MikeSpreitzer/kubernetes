@@ -18,6 +18,7 @@ package flowcontrol
 
 import (
 	"context"
+	"net"
 	"strconv"
 	"time"
 
@@ -25,7 +26,6 @@ import (
 	"k8s.io/apiserver/pkg/server/mux"
 	"k8s.io/apiserver/pkg/util/flowcontrol/counter"
 	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
-	fqs "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/queueset"
 	"k8s.io/apiserver/pkg/util/flowcontrol/metrics"
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/klog/v2"
@@ -70,12 +70,17 @@ type Interface interface {
 
 // This request filter implements https://github.com/kubernetes/enhancements/blob/master/keps/sig-api-machinery/1040-priority-and-fairness/README.md
 
-// New creates a new instance to implement API priority and fairness
+// New creates a new instance to implement API priority and fairness.
+// The idHint IP address is used to form the ID used to post
+// concurrency limits in PriorityLevelConfigurationStatus.  If that IP
+// is unspecified (i.e., zero) or loopback then a distinctive address
+// of the same family is chosen.
 func New(
 	informerFactory kubeinformers.SharedInformerFactory,
 	flowcontrolClient flowcontrolclient.FlowcontrolV1beta1Interface,
 	serverConcurrencyLimit int,
 	requestWaitLimit time.Duration,
+	idHint net.IP,
 ) Interface {
 	grc := counter.NoOp{}
 	clk := clock.RealClock{}
@@ -89,7 +94,7 @@ func New(
 		ServerConcurrencyLimit: serverConcurrencyLimit,
 		RequestWaitLimit:       requestWaitLimit,
 		ObsPairGenerator:       metrics.PriorityLevelConcurrencyObserverPairGenerator,
-		QueueSetFactory:        fqs.NewQueueSetFactory(clk, grc),
+		IDHint:                 idHint,
 	})
 }
 
@@ -132,6 +137,12 @@ type TestableConfig struct {
 
 	// QueueSetFactory for the queuing implementation
 	QueueSetFactory fq.QueueSetFactory
+
+	// IDHint is used to form the ID used to post
+	// concurrency limits in PriorityLevelConfigurationStatus.  If that IP
+	// is unspecified (i.e., zero) or loopback then a distinctive address
+	// of the same family is chosen.
+	IDHint net.IP
 }
 
 // NewTestable is extra flexible to facilitate testing
