@@ -22,6 +22,7 @@ go_library(
         "//staging/src/k8s.io/apimachinery/pkg/types:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/util/clock:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/util/errors:go_default_library",
+        "//staging/src/k8s.io/apimachinery/pkg/util/net:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/util/runtime:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/util/wait:go_default_library",
         "//staging/src/k8s.io/apiserver/pkg/apis/flowcontrol/bootstrap:go_default_library",

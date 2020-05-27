@@ -246,6 +246,7 @@ func TestConfigConsumer(t *testing.T) {
 				ServerConcurrencyLimit: 100,
 				RequestWaitLimit:       time.Minute,
 				ObsPairGenerator:       metrics.PriorityLevelConcurrencyObserverPairGenerator,
+				IDHint:                 nil,
 				QueueSetFactory:        cts,
 			})
 			cts.cfgCtlr = ctlr
