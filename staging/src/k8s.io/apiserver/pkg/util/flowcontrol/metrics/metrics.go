@@ -128,14 +128,32 @@ var (
 		},
 		[]string{priorityLevel, phase},
 	)
-	windowedRequestCountIntegrals = compbasemetrics.NewCounterVec(
+	requestCountElapsedSecondses = compbasemetrics.NewCounterVec(
 		&compbasemetrics.CounterOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
-			Name:      "windowed_request_count_integrals",
-			Help:      "Integrals of powers of number of requests queued, executing since startup",
+			Name:      "request_count_elapsed_seconds",
+			Help:      "Seconds over which number of requests queued, executing has been integrated",
 		},
-		[]string{priorityLevel, phase, power},
+		[]string{priorityLevel, phase},
+	)
+	requestCountIntegrals = compbasemetrics.NewCounterVec(
+		&compbasemetrics.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "request_count_integral",
+			Help:      "Integral of number of requests queued, executing since startup",
+		},
+		[]string{priorityLevel, phase},
+	)
+	requestCountSquaredIntegrals = compbasemetrics.NewCounterVec(
+		&compbasemetrics.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "request_count_squared_integral",
+			Help:      "Integral of square of number of requests queued, executing since startup",
+		},
+		[]string{priorityLevel, phase},
 	)
 	apiserverCurrentInqueueRequests = compbasemetrics.NewGaugeVec(
 		&compbasemetrics.GaugeOpts{
@@ -200,7 +218,9 @@ var (
 		windowedRequestCountWatermarks,
 		windowedRequestCountAvg,
 		windowedRequestCountStddev,
-		windowedRequestCountIntegrals,
+		requestCountElapsedSecondses,
+		requestCountIntegrals,
+		requestCountSquaredIntegrals,
 		apiserverCurrentInqueueRequests,
 		apiserverRequestQueueLength,
 		apiserverRequestConcurrencyLimit,
@@ -233,13 +253,10 @@ func SetWindowedRequestStats(statmm map[string]map[string]*WindowedIntegratorRes
 			}
 			windowedRequestCountAvg.WithLabelValues(plName, phase).Set(stats.Current.Average)
 			windowedRequestCountStddev.WithLabelValues(plName, phase).Set(stats.Current.StandardDeviation)
-			for i, ix := range stats.Current.Integrals {
-				var prev float64
-				if len(stats.Previous.Integrals) > i {
-					prev = stats.Previous.Integrals[i]
-				}
-				windowedRequestCountIntegrals.WithLabelValues(plName, phase, strconv.Itoa(i)).Add(ix - prev)
-			}
+			delta := stats.Current.Integrals.Sub(stats.Previous.Integrals)
+			requestCountElapsedSecondses.WithLabelValues(plName, phase).Add(delta.ElapsedSeconds)
+			requestCountIntegrals.WithLabelValues(plName, phase).Add(delta.IntegralX)
+			requestCountSquaredIntegrals.WithLabelValues(plName, phase).Add(delta.IntegralXX)
 		}
 	}
 }

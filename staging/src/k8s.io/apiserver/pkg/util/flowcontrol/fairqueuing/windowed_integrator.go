@@ -61,8 +61,8 @@ type WindowedIntegratorResults struct {
 	// StandardDeviation is sqrt( average_over_windows( (X-Average)^2 ) )
 	StandardDeviation float64
 
-	// Integrals[i] is the integral of X^i since the creation of the integrator
-	Integrals [3]float64
+	// Integrals are cumulative since the creation of the integrator
+	Integrals Integrals
 }
 
 type windowedIntegrator struct {
@@ -80,7 +80,7 @@ type windowedIntegrator struct {
 	// covers at most 5 seconds, a little more then 2^32 nanoseconds.
 	// Supposing concurrency is at most 2^10, headIntegrals[2] needs
 	// at most a little over 2^52 bits of precision --- which it has.
-	headIntegrals [3]float64
+	headIntegrals Integrals
 
 	// integrals from creation of this integrator to
 	// currentWindowStart of x^0, x^1, x^2.  Regarding precision:
@@ -90,12 +90,64 @@ type windowedIntegrator struct {
 	// 2^25 seconds.  So we need about 2^43 bits of precision per
 	// year.  With 53 bits in a float64, this should work for about a
 	// thousand years.
-	tailIntegrals [3]float64
+	tailIntegrals Integrals
 }
 
 type integratorWindow struct {
-	integrals [3]float64 // integrals[i] is integral of X^i
-	min, max  float64
+	Integrals
+	min, max float64
+}
+
+// Integrals are the integrals of the 0, 1, and 2 powers of some
+// variable X over some range of time.
+type Integrals struct {
+	ElapsedSeconds float64 // integral of dt
+	IntegralX      float64 // integral of x dt
+	IntegralXX     float64 // integral of x*x dt
+}
+
+// ConstantIntegrals is for a constant X
+func ConstantIntegrals(dt, x float64) Integrals {
+	return Integrals{
+		ElapsedSeconds: dt,
+		IntegralX:      x * dt,
+		IntegralXX:     x * x * dt,
+	}
+}
+
+// Add combines over two ranges of time
+func (igr Integrals) Add(ogr Integrals) Integrals {
+	return Integrals{
+		ElapsedSeconds: igr.ElapsedSeconds + ogr.ElapsedSeconds,
+		IntegralX:      igr.IntegralX + ogr.IntegralX,
+		IntegralXX:     igr.IntegralXX + ogr.IntegralXX,
+	}
+}
+
+// Sub finds the difference between a range of time and a subrange
+func (igr Integrals) Sub(ogr Integrals) Integrals {
+	return Integrals{
+		ElapsedSeconds: igr.ElapsedSeconds - ogr.ElapsedSeconds,
+		IntegralX:      igr.IntegralX - ogr.IntegralX,
+		IntegralXX:     igr.IntegralXX - ogr.IntegralXX,
+	}
+}
+
+// AvgAndStdDev returns the average and standard devation
+func (igr Integrals) AvgAndStdDev() (float64, float64) {
+	if igr.ElapsedSeconds <= 0 {
+		return math.NaN(), math.NaN()
+	}
+	avg := igr.IntegralX / igr.ElapsedSeconds
+	// standard deviation is sqrt( average( (x - xbar)^2 ) )
+	// = sqrt( Integral( x^2 + xbar^2 -2*x*xbar dt ) / Duration )
+	// = sqrt( ( Integral( x^2 dt ) + Duration * xbar^2 - 2*xbar*Integral(x dt) ) / Duration)
+	// = sqrt( Integral(x^2 dt)/Duration - xbar^2 )
+	variance := igr.IntegralXX/igr.ElapsedSeconds - avg*avg
+	if variance >= 0 {
+		return avg, math.Sqrt(variance)
+	}
+	return avg, math.NaN()
 }
 
 // NewWindowedIntegrator makes one that uses the given clock
@@ -126,10 +178,8 @@ func (wi *windowedIntegrator) slideTo(now time.Time) {
 	for currentWindowEnd := wi.currentWindowStart.Add(wi.windowWidth); !now.Before(currentWindowEnd); currentWindowEnd = wi.currentWindowStart.Add(wi.windowWidth) {
 		// need to close out the current window and start another
 		wi.updateLocked(currentWindowEnd)
-		wi.tailIntegrals[0] += wi.headIntegrals[0]
-		wi.tailIntegrals[1] += wi.headIntegrals[1]
-		wi.tailIntegrals[2] += wi.headIntegrals[2]
-		wi.headIntegrals = [3]float64{0, 0, 0}
+		wi.tailIntegrals = wi.tailIntegrals.Add(wi.headIntegrals)
+		wi.headIntegrals = Integrals{}
 		wi.currentWindowStart = currentWindowEnd
 		wi.currentWindow = (wi.currentWindow + 1) % len(wi.windows)
 		if wi.currentWindow == wi.oldestWindow {
@@ -147,15 +197,9 @@ func (wi *windowedIntegrator) updateLocked(now time.Time) {
 	dt := now.Sub(wi.lastTime).Seconds()
 	wi.lastTime = now
 	iw := &wi.windows[wi.currentWindow]
-	x := wi.x
-	xdt := x * dt
-	xxdt := x * x * dt
-	iw.integrals[0] += dt
-	iw.integrals[1] += xdt
-	iw.integrals[2] += xxdt
-	wi.headIntegrals[0] += dt
-	wi.headIntegrals[1] += xdt
-	wi.headIntegrals[2] += xxdt
+	delta := ConstantIntegrals(dt, wi.x)
+	iw.Integrals = iw.Add(delta)
+	wi.headIntegrals = wi.headIntegrals.Add(delta)
 }
 
 func (wi *windowedIntegrator) GetResults(mins, maxs []float64) WindowedIntegratorResults {
@@ -176,37 +220,20 @@ func (wi *windowedIntegrator) GetResults(mins, maxs []float64) WindowedIntegrato
 		maxs = append(maxs, iw.max)
 		sum.min = math.Min(sum.min, iw.min)
 		sum.max = math.Max(sum.max, iw.max)
-		sum.integrals[0] += iw.integrals[0]
-		sum.integrals[1] += iw.integrals[1]
-		sum.integrals[2] += iw.integrals[2]
+		sum.Integrals = sum.Integrals.Add(iw.Integrals)
 	}
 	for len(mins) < len(windows) {
 		mins = append(mins, 0)
 		maxs = append(maxs, 0)
 	}
-	var avg, stddev float64
-	if sum.integrals[0] <= 0 {
-		avg, stddev = math.NaN(), math.NaN()
-	} else {
-		avg = sum.integrals[1] / sum.integrals[0]
-		variance := sum.integrals[2]/sum.integrals[0] - avg*avg
-		if variance >= 0 {
-			stddev = math.Sqrt(variance)
-		} else {
-			stddev = math.NaN()
-		}
-	}
+	avg, stddev := sum.Integrals.AvgAndStdDev()
 	return WindowedIntegratorResults{
 		Min:               mins,
 		Max:               maxs,
-		Duration:          sum.integrals[0],
+		Duration:          sum.ElapsedSeconds,
 		Average:           avg,
 		StandardDeviation: stddev,
-		Integrals: [3]float64{
-			wi.headIntegrals[0] + wi.tailIntegrals[0],
-			wi.headIntegrals[1] + wi.tailIntegrals[1],
-			wi.headIntegrals[2] + wi.tailIntegrals[2],
-		},
+		Integrals:         wi.headIntegrals.Add(wi.tailIntegrals),
 	}
 }
 

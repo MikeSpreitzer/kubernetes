@@ -17,7 +17,6 @@ limitations under the License.
 package fairqueuing
 
 import (
-	"math"
 	"sync"
 	"time"
 
@@ -50,7 +49,7 @@ type integrator struct {
 	clk       clock.PassiveClock
 	lastTime  time.Time
 	x         float64
-	integrals [3]float64 // integral of x^0, x^1, and x^2
+	integrals Integrals
 	min, max  float64
 }
 
@@ -97,9 +96,7 @@ func (igr *integrator) updateLocked() {
 	now := igr.clk.Now()
 	dt := now.Sub(igr.lastTime).Seconds()
 	igr.lastTime = now
-	igr.integrals[0] += dt
-	igr.integrals[1] += dt * igr.x
-	igr.integrals[2] += dt * igr.x * igr.x
+	igr.integrals = igr.integrals.Add(ConstantIntegrals(dt, igr.x))
 }
 
 func (igr *integrator) GetResults() IntegratorResults {
@@ -112,7 +109,7 @@ func (igr *integrator) Reset() IntegratorResults {
 	igr.Lock()
 	defer func() { igr.Unlock() }()
 	results := igr.getResultsLocked()
-	igr.integrals = [3]float64{0, 0, 0}
+	igr.integrals = Integrals{}
 	igr.min = igr.x
 	igr.max = igr.x
 	return results
@@ -121,20 +118,7 @@ func (igr *integrator) Reset() IntegratorResults {
 func (igr *integrator) getResultsLocked() (results IntegratorResults) {
 	igr.updateLocked()
 	results.Min, results.Max = igr.min, igr.max
-	results.Duration = igr.integrals[0]
-	if results.Duration <= 0 {
-		results.Average = math.NaN()
-		results.Deviation = math.NaN()
-		return
-	}
-	results.Average = igr.integrals[1] / igr.integrals[0]
-	// Deviation is sqrt( Integral( (x - xbar)^2 dt) / Duration )
-	// = sqrt( Integral( x^2 + xbar^2 -2*x*xbar dt ) / Duration )
-	// = sqrt( ( Integral( x^2 dt ) + Duration * xbar^2 - 2*xbar*Integral(x dt) ) / Duration)
-	// = sqrt( Integral(x^2 dt)/Duration - xbar^2 )
-	variance := igr.integrals[2]/igr.integrals[0] - results.Average*results.Average
-	if variance >= 0 {
-		results.Deviation = math.Sqrt(variance)
-	}
+	results.Duration = igr.integrals.ElapsedSeconds
+	results.Average, results.Deviation = igr.integrals.AvgAndStdDev()
 	return
 }

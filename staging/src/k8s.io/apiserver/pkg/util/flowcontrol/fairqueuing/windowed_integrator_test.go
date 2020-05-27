@@ -50,7 +50,7 @@ func TestWindowedIntegrator(t *testing.T) {
 	if e, a := math.Sqrt(16.0/6.0), r1.StandardDeviation; math.Abs(a/e-1) > 1e-10 {
 		t.Errorf("Expected standard deviation %#+v, got %#+v", e, a)
 	}
-	if e, a := [3]float64{6, 24, 112}, r1.Integrals; !reflect.DeepEqual(e, a) {
+	if e, a := (Integrals{6, 24, 112}), r1.Integrals; !reflect.DeepEqual(e, a) {
 		t.Errorf("Expected integrals %#+v, got %#+v", e, a)
 	}
 	for i := 0; i < 6; i++ {
@@ -92,7 +92,7 @@ func TestWindowedIntegrator(t *testing.T) {
 	if e, a := math.Sqrt(variance/11.0), r2.StandardDeviation; math.Abs(a/e-1) > 1e-10 {
 		t.Errorf("Expected standard deviation %#+v, got %#+v", e, a)
 	}
-	if e, a := [3]float64{18, 180, 2280}, r2.Integrals; !reflect.DeepEqual(e, a) {
+	if e, a := (Integrals{18, 180, 2280}), r2.Integrals; !reflect.DeepEqual(e, a) {
 		t.Errorf("Expected integrals %#+v, got %#+v", e, a)
 	}
 }

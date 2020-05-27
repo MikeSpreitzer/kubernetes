@@ -180,13 +180,29 @@ var (
 		[]string{"requestKind"},
 	)
 
-	concurrencyIntegrals = compbasemetrics.NewCounterVec(
+	inflightCountElapsedSecondses = compbasemetrics.NewCounterVec(
 		&compbasemetrics.CounterOpts{
-			Name:           "apiserver_inflight_count_integrals",
-			Help:           "Integrals of powers of count of mutating, readonly requests executing since process start.",
+			Name:           "apiserver_inflight_count_seconds",
+			Help:           "Seconds over which count of mutating, readonly requests executing have been integrated.",
 			StabilityLevel: compbasemetrics.ALPHA,
 		},
-		[]string{"requestKind", "power"},
+		[]string{"requestKind"},
+	)
+	inflightCountIntegrals = compbasemetrics.NewCounterVec(
+		&compbasemetrics.CounterOpts{
+			Name:           "apiserver_inflight_count_integral",
+			Help:           "Integral of count of mutating, readonly requests executing since startup.",
+			StabilityLevel: compbasemetrics.ALPHA,
+		},
+		[]string{"requestKind"},
+	)
+	inflightCountSquaredIntegrals = compbasemetrics.NewCounterVec(
+		&compbasemetrics.CounterOpts{
+			Name:           "apiserver_inflight_count_squared_integral",
+			Help:           "Integral of square of count of mutating, readonly requests executing since startup.",
+			StabilityLevel: compbasemetrics.ALPHA,
+		},
+		[]string{"requestKind"},
 	)
 
 	requestTerminationsTotal = compbasemetrics.NewCounterVec(
@@ -212,7 +228,9 @@ var (
 		concurrencyWatermarks,
 		concurrencyAverage,
 		concurrencyStddev,
-		concurrencyIntegrals,
+		inflightCountElapsedSecondses,
+		inflightCountIntegrals,
+		inflightCountSquaredIntegrals,
 		requestTerminationsTotal,
 	}
 
@@ -293,13 +311,10 @@ func UpdateInflightRequestMetrics(readOnly, readOnlyPrev, mutating, mutatingPrev
 		reportMarks(kr.results.Max, kr.kind, "high")
 		concurrencyAverage.WithLabelValues(kr.kind).Set(kr.results.Average)
 		concurrencyStddev.WithLabelValues(kr.kind).Set(kr.results.StandardDeviation)
-		for i, ix := range kr.results.Integrals {
-			var prev float64
-			if len(kr.prev.Integrals) > i {
-				prev = kr.prev.Integrals[i]
-			}
-			concurrencyIntegrals.WithLabelValues(kr.kind, strconv.Itoa(i)).Add(ix - prev)
-		}
+		delta := kr.results.Integrals.Sub(kr.prev.Integrals)
+		inflightCountElapsedSecondses.WithLabelValues(kr.kind).Add(delta.ElapsedSeconds)
+		inflightCountIntegrals.WithLabelValues(kr.kind).Add(delta.IntegralX)
+		inflightCountSquaredIntegrals.WithLabelValues(kr.kind).Add(delta.IntegralXX)
 	}
 
 }
