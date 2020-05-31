@@ -41,12 +41,6 @@ const (
 	lag           = "lag"
 	mark          = "mark"
 	power         = "power"
-
-	// WaitingPhase is the phase value for a request waiting in a queue
-	WaitingPhase = "waiting"
-
-	// ExecutingPhase is the phase value for an executing request
-	ExecutingPhase = "executing"
 )
 
 var (
@@ -109,24 +103,6 @@ var (
 			Help:      "Minimum number of requests queued, executing in recent windows",
 		},
 		[]string{priorityLevel, phase, mark, lag},
-	)
-	windowedRequestCountAvg = compbasemetrics.NewGaugeVec(
-		&compbasemetrics.GaugeOpts{
-			Namespace: namespace,
-			Subsystem: subsystem,
-			Name:      "windowed_request_count_avg",
-			Help:      "Average number of requests queued, executing over recent windows",
-		},
-		[]string{priorityLevel, phase},
-	)
-	windowedRequestCountStddev = compbasemetrics.NewGaugeVec(
-		&compbasemetrics.GaugeOpts{
-			Namespace: namespace,
-			Subsystem: subsystem,
-			Name:      "windowed_request_count_stddev",
-			Help:      "Standard deviation of number of requests queued, executing over recent windows",
-		},
-		[]string{priorityLevel, phase},
 	)
 	requestCountElapsedSecondses = compbasemetrics.NewCounterVec(
 		&compbasemetrics.CounterOpts{
@@ -216,8 +192,6 @@ var (
 		apiserverRejectedRequestsTotal,
 		apiserverDispatchedRequestsTotal,
 		windowedRequestCountWatermarks,
-		windowedRequestCountAvg,
-		windowedRequestCountStddev,
 		requestCountElapsedSecondses,
 		requestCountIntegrals,
 		requestCountSquaredIntegrals,
@@ -251,8 +225,6 @@ func SetWindowedRequestStats(statmm map[string]map[string]*WindowedIntegratorRes
 					windowedRequestCountWatermarks.WithLabelValues(plName, phase, side.mark, strconv.Itoa(lg)).Set(side.vals[lg])
 				}
 			}
-			windowedRequestCountAvg.WithLabelValues(plName, phase).Set(stats.Current.Average)
-			windowedRequestCountStddev.WithLabelValues(plName, phase).Set(stats.Current.StandardDeviation)
 			delta := stats.Current.Integrals.Sub(stats.Previous.Integrals)
 			requestCountElapsedSecondses.WithLabelValues(plName, phase).Add(delta.ElapsedSeconds)
 			requestCountIntegrals.WithLabelValues(plName, phase).Add(delta.IntegralX)

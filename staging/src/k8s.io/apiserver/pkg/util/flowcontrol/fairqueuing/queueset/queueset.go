@@ -225,7 +225,7 @@ const (
 // executing at each point where there is a change in that quantity,
 // because the metrics --- and only the metrics --- track that
 // quantity per FlowSchema.
-func (qs *queueSet) StartRequest(ctx context.Context, hashValue uint64, fsName string, descr1, descr2 interface{}) (fq.Request, bool) {
+func (qs *queueSet) StartRequest(ctx context.Context, hashValue uint64, fsName string, descr1, descr2 interface{}, queueNoteFn fq.QueueNoteFn) (fq.Request, bool) {
 	qs.lockAndSyncTime()
 	defer qs.lock.Unlock()
 	var req *request
@@ -250,7 +250,7 @@ func (qs *queueSet) StartRequest(ctx context.Context, hashValue uint64, fsName s
 	// 3) Reject current request if there is not enough concurrency shares and
 	// we are at max queue length
 	// 4) If not rejected, create a request and enqueue
-	req = qs.timeoutOldRequestsAndRejectOrEnqueueLocked(ctx, hashValue, fsName, descr1, descr2)
+	req = qs.timeoutOldRequestsAndRejectOrEnqueueLocked(ctx, hashValue, fsName, descr1, descr2, queueNoteFn)
 	// req == nil means that the request was rejected - no remaining
 	// concurrency shares and at max queue length already
 	if req == nil {
@@ -296,6 +296,12 @@ func (qs *queueSet) StartRequest(ctx context.Context, hashValue uint64, fsName s
 		}()
 	}
 	return req, false
+}
+
+func (req *request) NoteQueued(inQueue bool) {
+	if req.queueNoteFn != nil {
+		req.queueNoteFn(inQueue)
+	}
 }
 
 func (req *request) Finish(execFn func()) bool {
@@ -402,7 +408,7 @@ func (qs *queueSet) getVirtualTimeRatioLocked() float64 {
 // returns the enqueud request on a successful enqueue
 // returns nil in the case that there is no available concurrency or
 // the queuelengthlimit has been reached
-func (qs *queueSet) timeoutOldRequestsAndRejectOrEnqueueLocked(ctx context.Context, hashValue uint64, fsName string, descr1, descr2 interface{}) *request {
+func (qs *queueSet) timeoutOldRequestsAndRejectOrEnqueueLocked(ctx context.Context, hashValue uint64, fsName string, descr1, descr2 interface{}, queueNoteFn fq.QueueNoteFn) *request {
 	//	Start with the shuffle sharding, to pick a queue.
 	queueIdx := qs.chooseQueueIndexLocked(hashValue, descr1, descr2)
 	queue := qs.queues[queueIdx]
@@ -422,6 +428,7 @@ func (qs *queueSet) timeoutOldRequestsAndRejectOrEnqueueLocked(ctx context.Conte
 		queue:       queue,
 		descr1:      descr1,
 		descr2:      descr2,
+		queueNoteFn: queueNoteFn,
 	}
 	if ok := qs.rejectOrEnqueueLocked(req); !ok {
 		return nil
@@ -465,6 +472,7 @@ func (qs *queueSet) removeTimedOutRequestsFromQueueLocked(queue *queue, fsName s
 			// get index for timed out requests
 			timeoutIdx = i
 			metrics.AddRequestsInQueues(qs.qCfg.Name, req.fsName, -1)
+			req.NoteQueued(false)
 		} else {
 			break
 		}
@@ -511,6 +519,7 @@ func (qs *queueSet) enqueueLocked(request *request) {
 	queue.Enqueue(request)
 	qs.totRequestsWaiting++
 	metrics.AddRequestsInQueues(qs.qCfg.Name, request.fsName, 1)
+	request.NoteQueued(true)
 	qs.integratorPair.RequestsWaiting.Add(1)
 }
 
@@ -574,6 +583,7 @@ func (qs *queueSet) dispatchLocked() bool {
 	qs.totRequestsExecuting++
 	queue.requestsExecuting++
 	metrics.AddRequestsInQueues(qs.qCfg.Name, request.fsName, -1)
+	request.NoteQueued(false)
 	metrics.AddRequestsExecuting(qs.qCfg.Name, request.fsName, 1)
 	qs.integratorPair.RequestsWaiting.Add(-1)
 	qs.integratorPair.RequestsExecuting.Add(1)
@@ -605,6 +615,7 @@ func (qs *queueSet) cancelWait(req *request) {
 			queue.requests = append(queue.requests[:i], queue.requests[i+1:]...)
 			qs.totRequestsWaiting--
 			metrics.AddRequestsInQueues(qs.qCfg.Name, req.fsName, -1)
+			req.NoteQueued(false)
 			qs.integratorPair.RequestsWaiting.Add(-1)
 			break
 		}

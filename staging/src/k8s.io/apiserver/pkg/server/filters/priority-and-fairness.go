@@ -25,7 +25,9 @@ import (
 
 	fcv1a1 "k8s.io/api/flowcontrol/v1alpha1"
 	apitypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apimachinery/pkg/util/wait"
+	epmetrics "k8s.io/apiserver/pkg/endpoints/metrics"
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
 	utilflowcontrol "k8s.io/apiserver/pkg/util/flowcontrol"
 	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
@@ -57,7 +59,15 @@ func GetClassification(ctx context.Context) *PriorityAndFairnessClassification {
 	return ctx.Value(priorityAndFairnessKey).(*PriorityAndFairnessClassification)
 }
 
-var atomicMutatingLen, atomicNonMutatingLen int32
+// waitingMark tracks requests waiting rather than being executed
+var waitingMark = &requestWatermark{
+	phase:              epmetrics.WaitingPhase,
+	readOnlyIntegrator: fq.NewWindowedIntegrator(clock.RealClock{}, inflightUsageMetricUpdatePeriod, inflightMetricsWindows),
+	mutatingIntegrator: fq.NewWindowedIntegrator(clock.RealClock{}, inflightUsageMetricUpdatePeriod, inflightMetricsWindows),
+}
+
+var atomicMutatingExecuting, atomicReadOnlyExecuting int32
+var atomicMutatingWaiting, atomicReadOnlyWaiting int32
 var startWindowedOnce sync.Once
 
 // WithPriorityAndFairness limits the number of in-flight
@@ -71,7 +81,10 @@ func WithPriorityAndFairness(
 		klog.Warningf("priority and fairness support not found, skipping")
 		return handler
 	}
-	startOnce.Do(startRecordingUsage)
+	startOnce.Do(func() {
+		startRecordingUsage(watermark)
+		startRecordingUsage(waitingMark)
+	})
 	startWindowedOnce.Do(func() {
 		go reportWindowedStats(fcIfc)
 	})
@@ -106,19 +119,23 @@ func WithPriorityAndFairness(
 
 		var served bool
 		isMutatingRequest := !nonMutatingRequestVerbs.Has(requestInfo.Verb)
-		execute := func() {
+		noteExecutingDelta := func(delta int32) {
 			if isMutatingRequest {
-				watermark.recordMutating(int(atomic.AddInt32(&atomicMutatingLen, 1)))
+				watermark.recordMutating(int(atomic.AddInt32(&atomicMutatingExecuting, delta)))
 			} else {
-				watermark.recordReadOnly(int(atomic.AddInt32(&atomicNonMutatingLen, 1)))
+				watermark.recordReadOnly(int(atomic.AddInt32(&atomicReadOnlyExecuting, delta)))
 			}
-			defer func() {
-				if isMutatingRequest {
-					watermark.recordMutating(int(atomic.AddInt32(&atomicMutatingLen, -1)))
-				} else {
-					watermark.recordReadOnly(int(atomic.AddInt32(&atomicNonMutatingLen, -1)))
-				}
-			}()
+		}
+		noteWaitingDelta := func(delta int32) {
+			if isMutatingRequest {
+				waitingMark.recordMutating(int(atomic.AddInt32(&atomicMutatingWaiting, delta)))
+			} else {
+				waitingMark.recordReadOnly(int(atomic.AddInt32(&atomicReadOnlyWaiting, delta)))
+			}
+		}
+		execute := func() {
+			noteExecutingDelta(1)
+			defer noteExecutingDelta(-1)
 			served = true
 			innerCtx := context.WithValue(ctx, priorityAndFairnessKey, classification)
 			innerReq := r.Clone(innerCtx)
@@ -127,10 +144,15 @@ func WithPriorityAndFairness(
 			handler.ServeHTTP(w, innerReq)
 		}
 		digest := utilflowcontrol.RequestDigest{requestInfo, user}
-		fcIfc.Handle(ctx, digest, note, execute)
+		fcIfc.Handle(ctx, digest, note, func(inQueue bool) {
+			if inQueue {
+				noteWaitingDelta(1)
+			} else {
+				noteWaitingDelta(-1)
+			}
+		}, execute)
 		if !served {
 			tooManyRequests(r, w)
-			return
 		}
 
 	})
@@ -145,15 +167,15 @@ func reportWindowedStats(fcIfc utilflowcontrol.Interface) {
 			statm := statmm[plName]
 			if statm == nil {
 				statm = map[string]*metrics.WindowedIntegratorResultsStep{
-					metrics.WaitingPhase:   {},
-					metrics.ExecutingPhase: {},
+					epmetrics.WaitingPhase:   {},
+					epmetrics.ExecutingPhase: {},
 				}
 				statmm[plName] = statm
 			}
-			w := statm[metrics.WaitingPhase]
+			w := statm[epmetrics.WaitingPhase]
 			w.Previous = w.Current
 			w.Current = ip.RequestsWaiting.GetResults(w.Previous.Min, w.Previous.Max)
-			e := statm[metrics.ExecutingPhase]
+			e := statm[epmetrics.ExecutingPhase]
 			e.Previous = e.Current
 			e.Current = ip.RequestsExecuting.GetResults(e.Previous.Min, e.Previous.Max)
 		}

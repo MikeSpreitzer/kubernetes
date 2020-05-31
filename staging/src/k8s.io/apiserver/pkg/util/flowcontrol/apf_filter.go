@@ -44,6 +44,7 @@ type Interface interface {
 	Handle(ctx context.Context,
 		requestDigest RequestDigest,
 		noteFn func(fs *fctypesv1a1.FlowSchema, pl *fctypesv1a1.PriorityLevelConfiguration),
+		queueNoteFn fq.QueueNoteFn,
 		execFn func(),
 	)
 
@@ -100,8 +101,9 @@ func NewTestable(
 
 func (cfgCtl *configController) Handle(ctx context.Context, requestDigest RequestDigest,
 	noteFn func(fs *fctypesv1a1.FlowSchema, pl *fctypesv1a1.PriorityLevelConfiguration),
+	queueNoteFn fq.QueueNoteFn,
 	execFn func()) {
-	fs, pl, isExempt, req, startWaitingTime := cfgCtl.startRequest(ctx, requestDigest)
+	fs, pl, isExempt, req, startWaitingTime := cfgCtl.startRequest(ctx, requestDigest, queueNoteFn)
 	queued := startWaitingTime != time.Time{}
 	noteFn(fs, pl)
 	if req == nil {

@@ -115,7 +115,7 @@ func (cqs *ctlTestQueueSet) IsIdle() bool {
 	return cqs.countActive == 0
 }
 
-func (cqs *ctlTestQueueSet) StartRequest(ctx context.Context, hashValue uint64, fsName string, descr1, descr2 interface{}) (req fq.Request, idle bool) {
+func (cqs *ctlTestQueueSet) StartRequest(ctx context.Context, hashValue uint64, fsName string, descr1, descr2 interface{}, queueNoteFn fq.QueueNoteFn) (req fq.Request, idle bool) {
 	cqs.cts.lock.Lock()
 	defer cqs.cts.lock.Unlock()
 	cqs.countActive++
@@ -328,10 +328,12 @@ func checkNewFS(cts *ctlTestState, rng *rand.Rand, trialName string, ftr *fsTest
 								t.Errorf("Fail at %s/%s: e=%v, a=%v", trialName, fs.Name, e, a)
 							}
 						}
-					}, func() {
-						startWG.Done()
-						_ = <-finishCh
-					})
+					}, func(inQueue bool) {
+					},
+						func() {
+							startWG.Done()
+							_ = <-finishCh
+						})
 					cts.requestWG.Done()
 				}(matches, isResource, rdu)
 				if rng.Float32() < 0.8 {

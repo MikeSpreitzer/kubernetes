@@ -17,7 +17,6 @@ limitations under the License.
 package fairqueuing
 
 import (
-	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -40,15 +39,6 @@ func TestWindowedIntegrator(t *testing.T) {
 	}
 	if e, a := []float64{6, 4, 0, 0}, r1.Max; !reflect.DeepEqual(e, a) {
 		t.Errorf("Expected Max %#+v, got %#+v", e, a)
-	}
-	if e, a := float64(6), r1.Duration; e != a {
-		t.Errorf("Expected duration %#+v, got %#+v", e, a)
-	}
-	if e, a := float64(4), r1.Average; e != a {
-		t.Errorf("Expected average %#+v, got %#+v", e, a)
-	}
-	if e, a := math.Sqrt(16.0/6.0), r1.StandardDeviation; math.Abs(a/e-1) > 1e-10 {
-		t.Errorf("Expected standard deviation %#+v, got %#+v", e, a)
 	}
 	if e, a := (Integrals{6, 24, 112}), r1.Integrals; !reflect.DeepEqual(e, a) {
 		t.Errorf("Expected integrals %#+v, got %#+v", e, a)
@@ -76,21 +66,6 @@ func TestWindowedIntegrator(t *testing.T) {
 	}
 	if e, a := []float64{18, 18, 14, 12}, r2.Max; !reflect.DeepEqual(e, a) {
 		t.Errorf("Expected Max %#+v, got %#+v", e, a)
-	}
-	if e, a := float64(11), r2.Duration; e != a {
-		t.Errorf("Expected duration %#+v, got %#+v", e, a)
-	}
-	if e, a := float64(148)/float64(11), r2.Average; e != a {
-		t.Errorf("Expected average %#+v, got %#+v", e, a)
-	}
-	diff := -float64(60) / float64(11)
-	variance := diff * diff
-	for i := 10; i <= 18; i += 2 {
-		diff = diff + 2
-		variance += diff * diff * 2
-	}
-	if e, a := math.Sqrt(variance/11.0), r2.StandardDeviation; math.Abs(a/e-1) > 1e-10 {
-		t.Errorf("Expected standard deviation %#+v, got %#+v", e, a)
 	}
 	if e, a := (Integrals{18, 180, 2280}), r2.Integrals; !reflect.DeepEqual(e, a) {
 		t.Errorf("Expected integrals %#+v, got %#+v", e, a)

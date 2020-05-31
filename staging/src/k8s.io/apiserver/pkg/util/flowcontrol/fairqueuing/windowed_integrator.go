@@ -52,15 +52,6 @@ type WindowedIntegratorResults struct {
 	// Max holds the high water marks for the windows.
 	Max []float64
 
-	// Duration is the number of seconds covered by the windows
-	Duration float64
-
-	// Average is the time-weighted average of X over the windows.
-	Average float64
-
-	// StandardDeviation is sqrt( average_over_windows( (X-Average)^2 ) )
-	StandardDeviation float64
-
 	// Integrals are cumulative since the creation of the integrator
 	Integrals Integrals
 }
@@ -209,31 +200,24 @@ func (wi *windowedIntegrator) GetResults(mins, maxs []float64) WindowedIntegrato
 	wi.slideTo(now)
 	wi.updateLocked(now)
 	windows := wi.windows
-	sum := windows[wi.currentWindow]
-	mins = append(mins[:0], sum.min)
-	maxs = append(maxs[:0], sum.max)
+	mins = mins[:0]
+	maxs = maxs[:0]
 	n := len(windows)
-	for i := wi.currentWindow; i != wi.oldestWindow; {
-		i = (i + n - 1) % n
-		iw := &windows[i]
-		mins = append(mins, iw.min)
-		maxs = append(maxs, iw.max)
-		sum.min = math.Min(sum.min, iw.min)
-		sum.max = math.Max(sum.max, iw.max)
-		sum.Integrals = sum.Integrals.Add(iw.Integrals)
+	for i := wi.currentWindow; true; i = (i + n - 1) % n {
+		mins = append(mins, windows[i].min)
+		maxs = append(maxs, windows[i].max)
+		if i == wi.oldestWindow {
+			break
+		}
 	}
 	for len(mins) < len(windows) {
 		mins = append(mins, 0)
 		maxs = append(maxs, 0)
 	}
-	avg, stddev := sum.Integrals.AvgAndStdDev()
 	return WindowedIntegratorResults{
-		Min:               mins,
-		Max:               maxs,
-		Duration:          sum.ElapsedSeconds,
-		Average:           avg,
-		StandardDeviation: stddev,
-		Integrals:         wi.headIntegrals.Add(wi.tailIntegrals),
+		Min:       mins,
+		Max:       maxs,
+		Integrals: wi.headIntegrals.Add(wi.tailIntegrals),
 	}
 }
 

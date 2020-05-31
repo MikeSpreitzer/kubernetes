@@ -80,7 +80,7 @@ func exerciseQueueSetUniformScenario(t *testing.T, name string, qs fq.QueueSet, 
 			go func(i, j int, uc uniformClient, igr fq.Integrator) {
 				for k := 0; k < uc.nCalls; k++ {
 					ClockWait(clk, counter, uc.thinkDuration)
-					req, idle := qs.StartRequest(context.Background(), uc.hash, fsName, name, []int{i, j, k})
+					req, idle := qs.StartRequest(context.Background(), uc.hash, fsName, name, []int{i, j, k}, nil)
 					t.Logf("%s: %d, %d, %d got req=%p, idle=%v", clk.Now().Format(nsTimeFmt), i, j, k, req, idle)
 					if req == nil {
 						atomic.AddUint64(&failedCount, 1)
@@ -347,10 +347,18 @@ func TestContextCancel(t *testing.T) {
 	qs := qsc.Complete(fq.DispatchingConfig{ConcurrencyLimit: 1})
 	counter.Add(1) // account for the goroutine running this test
 	ctx1 := context.Background()
-	req1, _ := qs.StartRequest(ctx1, 1, "fs1", "test", "one")
+	b2i := map[bool]int{false: 0, true: 1}
+	var qnc [2][2]int32
+	req1, _ := qs.StartRequest(ctx1, 1, "fs1", "test", "one", func(inQueue bool) { atomic.AddInt32(&qnc[0][b2i[inQueue]], 1) })
 	if req1 == nil {
 		t.Error("Request rejected")
 		return
+	}
+	if a := atomic.AddInt32(&qnc[0][0], 0); a != 1 {
+		t.Errorf("Got %d calls to queueNoteFn1(false), expected 1", a)
+	}
+	if a := atomic.AddInt32(&qnc[0][1], 0); a != 1 {
+		t.Errorf("Got %d calls to queueNoteFn1(true), expected 1", a)
 	}
 	var executed1 bool
 	idle1 := req1.Finish(func() {
@@ -359,11 +367,17 @@ func TestContextCancel(t *testing.T) {
 		tBefore := time.Now()
 		go func() {
 			time.Sleep(time.Second)
+			if a := atomic.AddInt32(&qnc[1][0], 0); a != 0 {
+				t.Errorf("Got %d calls to queueNoteFn2(false), expected 0", a)
+			}
+			if a := atomic.AddInt32(&qnc[1][1], 0); a != 1 {
+				t.Errorf("Got %d calls to queueNoteFn2(true), expected 1", a)
+			}
 			// account for unblocking the goroutine that waits on cancelation
 			counter.Add(1)
 			cancel2()
 		}()
-		req2, idle2a := qs.StartRequest(ctx2, 2, "fs2", "test", "two")
+		req2, idle2a := qs.StartRequest(ctx2, 2, "fs2", "test", "two", func(inQueue bool) { atomic.AddInt32(&qnc[1][b2i[inQueue]], 1) })
 		if idle2a {
 			t.Error("2nd StartRequest returned idle")
 		}
@@ -373,6 +387,9 @@ func TestContextCancel(t *testing.T) {
 			})
 			if idle2b {
 				t.Error("2nd Finish returned idle")
+			}
+			if a := atomic.AddInt32(&qnc[1][0], 0); a != 1 {
+				t.Errorf("Got %d calls to queueNoteFn2(false), expected 1", a)
 			}
 		}
 		tAfter := time.Now()

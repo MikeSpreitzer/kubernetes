@@ -20,6 +20,7 @@ import (
 	"context"
 	"time"
 
+	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
 	"k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/promise"
 )
 
@@ -53,6 +54,8 @@ type request struct {
 
 	// Indicates whether client has called Request::Wait()
 	waitStarted bool
+
+	queueNoteFn fq.QueueNoteFn
 }
 
 // queue is an array of requests with additional metadata required for

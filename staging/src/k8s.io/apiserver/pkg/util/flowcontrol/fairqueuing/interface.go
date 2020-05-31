@@ -97,8 +97,11 @@ type QueueSet interface {
 	// was idle at the moment of the return.  Otherwise idle==false
 	// and the client must call the Finish method of the Request
 	// exactly once.
-	StartRequest(ctx context.Context, hashValue uint64, fsName string, descr1, descr2 interface{}) (req Request, idle bool)
+	StartRequest(ctx context.Context, hashValue uint64, fsName string, descr1, descr2 interface{}, queueNoteFn QueueNoteFn) (req Request, idle bool)
 }
+
+// QueueNoteFn is called when a request enters and leaves a queue
+type QueueNoteFn func(inQueue bool)
 
 // Request represents the remainder of the handling of one request
 type Request interface {

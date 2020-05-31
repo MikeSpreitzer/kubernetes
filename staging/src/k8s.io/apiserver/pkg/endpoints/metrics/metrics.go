@@ -113,7 +113,7 @@ var (
 			Help:           "Number of requests dropped with 'Try again later' response",
 			StabilityLevel: compbasemetrics.ALPHA,
 		},
-		[]string{"requestKind"},
+		[]string{"request_kind"},
 	)
 	// RegisteredWatchers is a number of currently registered watchers splitted by resource.
 	RegisteredWatchers = compbasemetrics.NewGaugeVec(
@@ -149,60 +149,50 @@ var (
 			Help:           "Maximal number of currently used inflight request limit of this apiserver per request kind in last second.",
 			StabilityLevel: compbasemetrics.ALPHA,
 		},
-		[]string{"requestKind"},
+		[]string{"request_kind"},
+	)
+	currentInqueueRequests = compbasemetrics.NewGaugeVec(
+		&compbasemetrics.GaugeOpts{
+			Name:           "apiserver_current_inqueue_requests",
+			Help:           "Maximal number of queued requests in this apiserver per request kind in last second.",
+			StabilityLevel: compbasemetrics.ALPHA,
+		},
+		[]string{"request_kind"},
 	)
 
 	// low and high concurrency watermarks from the last few windows
 	concurrencyWatermarks = compbasemetrics.NewGaugeVec(
 		&compbasemetrics.GaugeOpts{
-			Name:           "apiserver_inflight_count_watermarks",
+			Name:           "apiserver_inserver_count_watermarks",
 			Help:           "Low and high watermark of mutating, readonly requests executing in recent windows.",
 			StabilityLevel: compbasemetrics.ALPHA,
 		},
-		[]string{"requestKind", "mark", "lag"},
+		[]string{"request_kind", "phase", "mark", "lag"},
 	)
 
-	concurrencyAverage = compbasemetrics.NewGaugeVec(
-		&compbasemetrics.GaugeOpts{
-			Name:           "apiserver_inflight_count_average",
-			Help:           "Average count of mutating, readonly requests executing during recent windows.",
-			StabilityLevel: compbasemetrics.ALPHA,
-		},
-		[]string{"requestKind"},
-	)
-
-	concurrencyStddev = compbasemetrics.NewGaugeVec(
-		&compbasemetrics.GaugeOpts{
-			Name:           "apiserver_inflight_count_stddev",
-			Help:           "Standard deviation of count of mutating, readonly requests executing during recent windows.",
-			StabilityLevel: compbasemetrics.ALPHA,
-		},
-		[]string{"requestKind"},
-	)
-
-	inflightCountElapsedSecondses = compbasemetrics.NewCounterVec(
+	inServerCountElapsedSecondses = compbasemetrics.NewCounterVec(
 		&compbasemetrics.CounterOpts{
-			Name:           "apiserver_inflight_count_seconds",
+			Name:           "apiserver_inserver_count_seconds",
 			Help:           "Seconds over which count of mutating, readonly requests executing have been integrated.",
 			StabilityLevel: compbasemetrics.ALPHA,
 		},
-		[]string{"requestKind"},
+		[]string{"request_kind", "phase"},
 	)
-	inflightCountIntegrals = compbasemetrics.NewCounterVec(
+	inServerCountIntegrals = compbasemetrics.NewCounterVec(
 		&compbasemetrics.CounterOpts{
-			Name:           "apiserver_inflight_count_integral",
+			Name:           "apiserver_inserver_count_integral",
 			Help:           "Integral of count of mutating, readonly requests executing since startup.",
 			StabilityLevel: compbasemetrics.ALPHA,
 		},
-		[]string{"requestKind"},
+		[]string{"request_kind", "phase"},
 	)
-	inflightCountSquaredIntegrals = compbasemetrics.NewCounterVec(
+	inServerCountSquaredIntegrals = compbasemetrics.NewCounterVec(
 		&compbasemetrics.CounterOpts{
-			Name:           "apiserver_inflight_count_squared_integral",
+			Name:           "apiserver_inserver_count_squared_integral",
 			Help:           "Integral of square of count of mutating, readonly requests executing since startup.",
 			StabilityLevel: compbasemetrics.ALPHA,
 		},
-		[]string{"requestKind"},
+		[]string{"request_kind", "phase"},
 	)
 
 	requestTerminationsTotal = compbasemetrics.NewCounterVec(
@@ -225,12 +215,11 @@ var (
 		WatchEvents,
 		WatchEventsSizes,
 		currentInflightRequests,
+		currentInqueueRequests,
 		concurrencyWatermarks,
-		concurrencyAverage,
-		concurrencyStddev,
-		inflightCountElapsedSecondses,
-		inflightCountIntegrals,
-		inflightCountSquaredIntegrals,
+		inServerCountElapsedSecondses,
+		inServerCountIntegrals,
+		inServerCountSquaredIntegrals,
 		requestTerminationsTotal,
 	}
 
@@ -271,6 +260,11 @@ const (
 	ReadOnlyKind = "readOnly"
 	// MutatingKind is a string identifying mutating request kind
 	MutatingKind = "mutating"
+
+	// WaitingPhase is the phase value for a request waiting in a queue
+	WaitingPhase = "waiting"
+	// ExecutingPhase is the phase value for an executing request
+	ExecutingPhase = "executing"
 )
 
 var registerMetrics sync.Once
@@ -301,27 +295,29 @@ type WindowStats struct {
 // mutating vs Readonly.  The previous metrics are needed because the
 // Prometheus counters used for the integrals-since-startup can only
 // be added to, not set.
-func UpdateInflightRequestMetrics(readOnly, readOnlyPrev, mutating, mutatingPrev *fq.WindowedIntegratorResults) {
+func UpdateInflightRequestMetrics(phase string, readOnly, readOnlyPrev, mutating, mutatingPrev *fq.WindowedIntegratorResults) {
 	for _, kr := range []struct {
 		kind          string
 		results, prev *fq.WindowedIntegratorResults
 	}{{ReadOnlyKind, readOnly, readOnlyPrev}, {MutatingKind, mutating, mutatingPrev}} {
-		currentInflightRequests.WithLabelValues(kr.kind).Set(kr.results.Max[1])
-		reportMarks(kr.results.Min, kr.kind, "low")
-		reportMarks(kr.results.Max, kr.kind, "high")
-		concurrencyAverage.WithLabelValues(kr.kind).Set(kr.results.Average)
-		concurrencyStddev.WithLabelValues(kr.kind).Set(kr.results.StandardDeviation)
+		if phase == ExecutingPhase {
+			currentInflightRequests.WithLabelValues(kr.kind).Set(kr.results.Max[1])
+		} else {
+			currentInqueueRequests.WithLabelValues(kr.kind).Set(kr.results.Max[1])
+		}
+		reportMarks(kr.results.Min, kr.kind, phase, "low")
+		reportMarks(kr.results.Max, kr.kind, phase, "high")
 		delta := kr.results.Integrals.Sub(kr.prev.Integrals)
-		inflightCountElapsedSecondses.WithLabelValues(kr.kind).Add(delta.ElapsedSeconds)
-		inflightCountIntegrals.WithLabelValues(kr.kind).Add(delta.IntegralX)
-		inflightCountSquaredIntegrals.WithLabelValues(kr.kind).Add(delta.IntegralXX)
+		inServerCountElapsedSecondses.WithLabelValues(kr.kind, phase).Add(delta.ElapsedSeconds)
+		inServerCountIntegrals.WithLabelValues(kr.kind, phase).Add(delta.IntegralX)
+		inServerCountSquaredIntegrals.WithLabelValues(kr.kind, phase).Add(delta.IntegralXX)
 	}
 
 }
 
-func reportMarks(marks []float64, kind, mark string) {
+func reportMarks(marks []float64, kind, phase, mark string) {
 	for lag := 1; lag < len(marks); lag++ {
-		concurrencyWatermarks.WithLabelValues(kind, mark, strconv.Itoa(lag)).Set(marks[lag])
+		concurrencyWatermarks.WithLabelValues(kind, phase, mark, strconv.Itoa(lag)).Set(marks[lag])
 	}
 }
 

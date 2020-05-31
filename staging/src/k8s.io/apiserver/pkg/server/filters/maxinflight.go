@@ -54,8 +54,9 @@ func handleError(w http.ResponseWriter, r *http.Request, err error) {
 	klog.Errorf(err.Error())
 }
 
-// requestWatermark is used to trak maximal usage of inflight requests.
+// requestWatermark is used to track maximal numbers of requests in a particular phase of handling
 type requestWatermark struct {
+	phase                                  string
 	readOnlyIntegrator, mutatingIntegrator fq.WindowedIntegrator
 	readOnlyResults, mutatingResults       fq.WindowedIntegratorResults
 }
@@ -68,17 +69,19 @@ func (w *requestWatermark) recordReadOnly(readOnlyVal int) {
 	w.readOnlyIntegrator.Set(float64(readOnlyVal))
 }
 
+// watermark tracks requests being executed (not waiting in a queue)
 var watermark = &requestWatermark{
+	phase:              metrics.ExecutingPhase,
 	readOnlyIntegrator: fq.NewWindowedIntegrator(clock.RealClock{}, inflightUsageMetricUpdatePeriod, inflightMetricsWindows),
 	mutatingIntegrator: fq.NewWindowedIntegrator(clock.RealClock{}, inflightUsageMetricUpdatePeriod, inflightMetricsWindows),
 }
 
-func startRecordingUsage() {
+func startRecordingUsage(watermark *requestWatermark) {
 	go func() {
 		wait.Forever(func() {
 			readOnlyResults := watermark.readOnlyIntegrator.GetResults(watermark.readOnlyResults.Min, watermark.readOnlyResults.Max)
 			mutatingResults := watermark.mutatingIntegrator.GetResults(watermark.mutatingResults.Min, watermark.mutatingResults.Max)
-			metrics.UpdateInflightRequestMetrics(&readOnlyResults, &watermark.readOnlyResults, &mutatingResults, &watermark.mutatingResults)
+			metrics.UpdateInflightRequestMetrics(watermark.phase, &readOnlyResults, &watermark.readOnlyResults, &mutatingResults, &watermark.mutatingResults)
 			watermark.readOnlyResults = readOnlyResults
 			watermark.mutatingResults = mutatingResults
 		}, inflightUsageMetricUpdatePeriod)
@@ -107,7 +110,7 @@ func WithMaxInFlightLimit(
 	mutatingLimit int,
 	longRunningRequestCheck apirequest.LongRunningRequestCheck,
 ) http.Handler {
-	startOnce.Do(startRecordingUsage)
+	startOnce.Do(func() { startRecordingUsage(watermark) })
 	if nonMutatingLimit == 0 && mutatingLimit == 0 {
 		return handler
 	}
