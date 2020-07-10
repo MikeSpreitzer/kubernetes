@@ -89,9 +89,9 @@ type RequestDigest struct {
 // this type and cfgMeal follow the convention that the suffix
 // "Locked" means that the caller must hold the configController lock.
 type configController struct {
-	name                string // varies in tests of fighting controllers
-	clock               clock.PassiveClock
-	queueSetFactory     fq.QueueSetFactory
+	name            string // varies in tests of fighting controllers
+	clock           clock.PassiveClock
+	queueSetFactory fq.QueueSetFactory
 
 	// Indicates whether to give incorrect referential integrity
 	// feedback; used for testing
