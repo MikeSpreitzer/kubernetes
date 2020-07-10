@@ -90,7 +90,6 @@ type RequestDigest struct {
 // "Locked" means that the caller must hold the configController lock.
 type configController struct {
 	name                string // varies in tests of fighting controllers
-	ignoreNotifications bool   // for testing
 	clock               clock.PassiveClock
 	queueSetFactory     fq.QueueSetFactory
 
@@ -183,7 +182,6 @@ func newTestableController(
 ) *configController {
 	cfgCtl := &configController{
 		name:                   name,
-		ignoreNotifications:    ignoreNotifications,
 		clock:                  clock,
 		queueSetFactory:        queueSetFactory,
 		invertDangle:           invertDangle,
@@ -193,16 +191,11 @@ func newTestableController(
 		priorityLevelStates:    make(map[string]*priorityLevelState),
 	}
 	klog.V(2).Infof("NewTestableController %q with serverConcurrencyLimit=%d, requestWaitLimit=%s", name, serverConcurrencyLimit, requestWaitLimit)
-	cfgCtl.initializeConfigController(informerFactory)
+	cfgCtl.configQueue = workqueue.NewNamedRateLimitingQueue(workqueue.NewItemExponentialFailureRateLimiter(200*time.Millisecond, 8*time.Hour), "priority_and_fairness_config_queue")
+
 	// ensure the data structure reflects the mandatory config
 	cfgCtl.lockAndDigestConfigObjects(nil, nil)
-	return cfgCtl
-}
 
-// initializeConfigController sets up the controller that processes
-// config API objects.
-func (cfgCtl *configController) initializeConfigController(informerFactory kubeinformers.SharedInformerFactory) {
-	cfgCtl.configQueue = workqueue.NewNamedRateLimitingQueue(workqueue.NewItemExponentialFailureRateLimiter(200*time.Millisecond, 8*time.Hour), "priority_and_fairness_config_queue")
 	fci := informerFactory.Flowcontrol().V1alpha1()
 	pli := fci.PriorityLevelConfigurations()
 	fsi := fci.FlowSchemas()
@@ -210,49 +203,49 @@ func (cfgCtl *configController) initializeConfigController(informerFactory kubei
 	cfgCtl.plInformerSynced = pli.Informer().HasSynced
 	cfgCtl.fsLister = fsi.Lister()
 	cfgCtl.fsInformerSynced = fsi.Informer().HasSynced
-	if cfgCtl.ignoreNotifications {
-		return
+	if !ignoreNotifications {
+		pli.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc: func(obj interface{}) {
+				pl := obj.(*fctypesv1a1.PriorityLevelConfiguration)
+				klog.V(7).Infof("Triggered API priority and fairness config reloading due to creation of PLC %s", pl.Name)
+				cfgCtl.configQueue.Add(0)
+			},
+			UpdateFunc: func(oldObj, newObj interface{}) {
+				newPL := newObj.(*fctypesv1a1.PriorityLevelConfiguration)
+				oldPL := oldObj.(*fctypesv1a1.PriorityLevelConfiguration)
+				if !apiequality.Semantic.DeepEqual(oldPL.Spec, newPL.Spec) {
+					klog.V(7).Infof("Triggered API priority and fairness config reloading due to spec update of PLC %s", newPL.Name)
+					cfgCtl.configQueue.Add(0)
+				}
+			},
+			DeleteFunc: func(obj interface{}) {
+				name, _ := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
+				klog.V(7).Infof("Triggered API priority and fairness config reloading due to deletion of PLC %s", name)
+				cfgCtl.configQueue.Add(0)
+
+			}})
+		fsi.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc: func(obj interface{}) {
+				fs := obj.(*fctypesv1a1.FlowSchema)
+				klog.V(7).Infof("Triggered API priority and fairness config reloading due to creation of FS %s", fs.Name)
+				cfgCtl.configQueue.Add(0)
+			},
+			UpdateFunc: func(oldObj, newObj interface{}) {
+				newFS := newObj.(*fctypesv1a1.FlowSchema)
+				oldFS := oldObj.(*fctypesv1a1.FlowSchema)
+				if !apiequality.Semantic.DeepEqual(oldFS.Spec, newFS.Spec) {
+					klog.V(7).Infof("Triggered API priority and fairness config reloading due to spec update of FS %s", newFS.Name)
+					cfgCtl.configQueue.Add(0)
+				}
+			},
+			DeleteFunc: func(obj interface{}) {
+				name, _ := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
+				klog.V(7).Infof("Triggered API priority and fairness config reloading due to deletion of FS %s", name)
+				cfgCtl.configQueue.Add(0)
+
+			}})
 	}
-	pli.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			pl := obj.(*fctypesv1a1.PriorityLevelConfiguration)
-			klog.V(7).Infof("Triggered API priority and fairness config reloading due to creation of PLC %s", pl.Name)
-			cfgCtl.configQueue.Add(0)
-		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
-			newPL := newObj.(*fctypesv1a1.PriorityLevelConfiguration)
-			oldPL := oldObj.(*fctypesv1a1.PriorityLevelConfiguration)
-			if !apiequality.Semantic.DeepEqual(oldPL.Spec, newPL.Spec) {
-				klog.V(7).Infof("Triggered API priority and fairness config reloading due to spec update of PLC %s", newPL.Name)
-				cfgCtl.configQueue.Add(0)
-			}
-		},
-		DeleteFunc: func(obj interface{}) {
-			name, _ := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
-			klog.V(7).Infof("Triggered API priority and fairness config reloading due to deletion of PLC %s", name)
-			cfgCtl.configQueue.Add(0)
-
-		}})
-	fsi.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			fs := obj.(*fctypesv1a1.FlowSchema)
-			klog.V(7).Infof("Triggered API priority and fairness config reloading due to creation of FS %s", fs.Name)
-			cfgCtl.configQueue.Add(0)
-		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
-			newFS := newObj.(*fctypesv1a1.FlowSchema)
-			oldFS := oldObj.(*fctypesv1a1.FlowSchema)
-			if !apiequality.Semantic.DeepEqual(oldFS.Spec, newFS.Spec) {
-				klog.V(7).Infof("Triggered API priority and fairness config reloading due to spec update of FS %s", newFS.Name)
-				cfgCtl.configQueue.Add(0)
-			}
-		},
-		DeleteFunc: func(obj interface{}) {
-			name, _ := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
-			klog.V(7).Infof("Triggered API priority and fairness config reloading due to deletion of FS %s", name)
-			cfgCtl.configQueue.Add(0)
-
-		}})
+	return cfgCtl
 }
 
 func (cfgCtl *configController) WaitForCacheSync(stopCh <-chan struct{}) bool {
@@ -285,11 +278,12 @@ func (cfgCtl *configController) processNextWorkItem() bool {
 	func(obj interface{}) {
 		defer cfgCtl.configQueue.Done(obj)
 		_, _, needRetry, wait := cfgCtl.SyncOne()
-		if needRetry {
+		switch {
+		case needRetry:
 			cfgCtl.configQueue.AddRateLimited(obj)
-		} else if wait > 0 {
+		case wait > 0:
 			cfgCtl.configQueue.AddAfter(obj, wait)
-		} else {
+		default:
 			cfgCtl.configQueue.Forget(obj)
 		}
 	}(obj)
@@ -297,6 +291,13 @@ func (cfgCtl *configController) processNextWorkItem() bool {
 	return true
 }
 
+// SyncOne does one full synchronization.  It reads all the API
+// objects that configure API Priority and Fairness and updates the
+// local configController accordingly.  The return values are:
+// - triedWrites bool indicating whether status updates were attempted;
+// - didWrites bool indicating whether status udates were successful;
+// - needRetry bool indicating whether to requeue with exponential backoff;
+// - wait time.Duration indicating to requeue after a specific delay.
 func (cfgCtl *configController) SyncOne() (bool, bool, bool, time.Duration) {
 	klog.V(5).Infof("%s SyncOne at %s", cfgCtl.name, cfgCtl.clock.Now().Format(timeFmt))
 	all := labels.Everything()
@@ -376,10 +377,11 @@ func (cfgCtl *configController) digestConfigObjects(newPLs []*fctypesv1a1.Priori
 		klog.V(4).Infof("%s writing Condition %s to FlowSchema %s, which had ResourceVersion=%s, because its previous value was %s", cfgCtl.name, string(enc), fsu.flowSchema.Name, fsu.flowSchema.ResourceVersion, fcfmt.Fmt(fsu.oldValue))
 		triedWrites = true
 		fs2, err := cfgCtl.flowcontrolClient.FlowSchemas().Patch(context.TODO(), fsu.flowSchema.Name, apitypes.StrategicMergePatchType, []byte(fmt.Sprintf(`{"status": {"conditions": [ %s ] } }`, string(enc))), metav1.PatchOptions{FieldManager: fieldManager}, "status")
-		if err == nil {
+		switch {
+		case err == nil:
 			cfgCtl.noteStatusUpdate(fsu.flowSchema, fs2)
 			didWrites = true
-		} else if apierrors.IsNotFound(err) || apierrors.IsConflict(err) {
+		case apierrors.IsNotFound(err) || apierrors.IsConflict(err):
 			// This object has been deleted or the server has a newer
 			// revision.  In either case a notification is coming and
 			// nothing more needs to be done here.
@@ -388,12 +390,9 @@ func (cfgCtl *configController) digestConfigObjects(newPLs []*fctypesv1a1.Priori
 				why = "Conflict"
 			}
 			klog.V(5).Infof("%s at %s: attempted update of FlowSchema %s from ResourceVersion %s failed because %s", cfgCtl.name, cfgCtl.clock.Now().Format(timeFmt), fsu.flowSchema.Name, fsu.flowSchema.ResourceVersion, why)
-		} else {
+		default:
 			errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to set a status.condition for FlowSchema %s", fsu.flowSchema.Name)))
 		}
-	}
-	if len(errs) == 0 {
-		return triedWrites, didWrites, wait, nil
 	}
 	return triedWrites, didWrites, wait, errorutils.NewAggregate(errs)
 }
@@ -425,6 +424,11 @@ func (cfgCtl *configController) lockAndDigestConfigObjects(newPLs []*fctypesv1a1
 
 	meal.finishQueueSetReconfigsLocked()
 
+	// Here is one of the two cases where the embargo time gets
+	// cleared: when this controller decides it no longer wants to
+	// change any FlowSchema's Status.  A desire to make a change can
+	// show up here as either a suppressed write or a non-suppressed
+	// write.
 	if cfgCtl.embargoTime != nil && len(meal.fsStatusUpdates) == 0 && !meal.suppressedWrites {
 		klog.V(5).Infof("%s clearing embargo because no more need to update FlowSchemaStatus", meal.cfgCtl.name)
 		cfgCtl.embargoTime = nil
@@ -433,9 +437,9 @@ func (cfgCtl *configController) lockAndDigestConfigObjects(newPLs []*fctypesv1a1
 	// The new config has been constructed
 	cfgCtl.priorityLevelStates = meal.newPLStates
 	if meal.suppressedWrites {
-		delay := DurationMax((*cfgCtl.embargoTime).Sub(cfgCtl.clock.Now()), time.Millisecond)
-		klog.V(5).Infof("%s switched to new API Priority and Fairness configuration and will wait %s before reconsidering FlowSchema Status updates", meal.cfgCtl.name, delay)
-		return nil, delay
+		wait := DurationMax((*cfgCtl.embargoTime).Sub(cfgCtl.clock.Now()), time.Millisecond)
+		klog.V(5).Infof("%s switched to new API Priority and Fairness configuration and will wait %s before reconsidering FlowSchema Status updates", meal.cfgCtl.name, wait)
+		return nil, wait
 	}
 	klog.V(5).Infof("%s switched to new API Priority and Fairness configuration and will attempt %d FlowSchema Status updates", meal.cfgCtl.name, len(meal.fsStatusUpdates))
 	return meal.fsStatusUpdates, 0
