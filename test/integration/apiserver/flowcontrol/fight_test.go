@@ -34,7 +34,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 const timeFmt = "2006-01-02T15:04:05.999"
