@@ -27,7 +27,6 @@ go_test(
         "//test/integration/framework:go_default_library",
         "//vendor/github.com/prometheus/common/expfmt:go_default_library",
         "//vendor/github.com/prometheus/common/model:go_default_library",
-        "//vendor/k8s.io/klog:go_default_library",
     ],
 )
 
