@@ -27,39 +27,71 @@ import (
 
 func TestSamplingHistogram(t *testing.T) {
 	clk := testclock.NewFakeClock(time.Unix(time.Now().Unix(), 999999990))
-	sh, err := NewTestableSamplingHistogram(clk, SamplingHistogramOpts{
-		HistogramOpts: prometheus.HistogramOpts{
-			Namespace:   "test",
-			Subsystem:   "func",
-			Name:        "one",
-			Help:        "a helpful string",
-			ConstLabels: map[string]string{"l1": "v1", "l2": "v2"},
-			Buckets:     []float64{0, 1, 2},
-		},
-		InitialValue:   1,
-		SamplingPeriod: time.Second,
-	})
+	sh, err := NewTestableSamplingHistogram(clk,
+		SamplingHistogramOpts{
+			HistogramOpts: prometheus.HistogramOpts{
+				Namespace:   "test",
+				Subsystem:   "func",
+				Name:        "one",
+				Help:        "a helpful string",
+				ConstLabels: map[string]string{"l1": "v1", "l2": "v2"},
+				Buckets:     []float64{0, 1, 2},
+			},
+			InitialValue:   1,
+			SamplingPeriod: time.Second,
+		})
 	if sh == nil || err != nil {
 		t.Errorf("Creation failed; err=%s", err.Error())
 	}
-	expectHistogram(t, "After creation", sh, 0, 0, 0, 0)
+	exerciseSamplingHistogram(t, "singleton", clk, sh, map[string]string{"l1": "v1", "l2": "v2"})
+}
+
+func TestSamplingHistogramVec(t *testing.T) {
+	clk := testclock.NewFakeClock(time.Unix(time.Now().Unix(), 999999990))
+	shv, err := NewTestableSamplingHistogramVec(clk,
+		SamplingHistogramOpts{
+			HistogramOpts: prometheus.HistogramOpts{
+				Namespace:   "test",
+				Subsystem:   "func",
+				Name:        "one",
+				Help:        "a helpful string",
+				ConstLabels: map[string]string{"l1": "v1", "l2": "v2"},
+				Buckets:     []float64{0, 1, 2},
+			},
+			InitialValue:   1,
+			SamplingPeriod: time.Second,
+		},
+		[]string{"l3", "l4"})
+	if shv == nil || err != nil {
+		t.Errorf("Creation failed; err=%s", err.Error())
+	}
+	sh1 := shv.WithLabelValues("v3", "v4").(SamplingHistogram)
+	exerciseSamplingHistogram(t, "vector member 1", clk, sh1, map[string]string{"l1": "v1", "l2": "v2", "l3": "v3", "l4": "v4"})
+	clk.SetTime(time.Unix(time.Now().Unix()+1, 999999990))
+	sh2 := shv.With(map[string]string{"l4": "V4", "l3": "V3"}).(SamplingHistogram)
+	exerciseSamplingHistogram(t, "vector member 2", clk, sh2, map[string]string{"l1": "v1", "l2": "v2", "l3": "V3", "l4": "V4"})
+}
+
+func exerciseSamplingHistogram(t *testing.T, what string, clk *testclock.FakeClock, sh SamplingHistogram, expectedLabels map[string]string) {
+	t.Logf("%s is %#+v", what, sh)
+	expectHistogram(t, "After creation of "+what, sh, expectedLabels, 0, 0, 0, 0)
 	sh.Set(2)
-	expectHistogram(t, "After initial Set", sh, 0, 0, 0, 0)
+	expectHistogram(t, "After initial Set of "+what, sh, expectedLabels, 0, 0, 0, 0)
 	clk.Step(9 * time.Nanosecond)
-	expectHistogram(t, "Just before the end of the first sampling period", sh, 0, 0, 0, 0)
+	expectHistogram(t, "Just before the end of the first sampling period of "+what, sh, expectedLabels, 0, 0, 0, 0)
 	clk.Step(1 * time.Nanosecond)
-	expectHistogram(t, "At the end of the first sampling period", sh, 0, 0, 1, 1)
+	expectHistogram(t, "At the end of the first sampling period of "+what, sh, expectedLabels, 0, 0, 1, 1)
 	clk.Step(1 * time.Nanosecond)
-	expectHistogram(t, "Barely into second sampling period", sh, 0, 0, 1, 1)
+	expectHistogram(t, "Barely into second sampling period of "+what, sh, expectedLabels, 0, 0, 1, 1)
 	sh.Set(-0.5)
 	sh.Add(1)
 	clk.Step(999999998 * time.Nanosecond)
-	expectHistogram(t, "Just before the end of second sampling period", sh, 0, 0, 1, 1)
+	expectHistogram(t, "Just before the end of second sampling period of "+what, sh, expectedLabels, 0, 0, 1, 1)
 	clk.Step(1 * time.Nanosecond)
-	expectHistogram(t, "At the end of second sampling period", sh, 0, 1, 2, 2)
+	expectHistogram(t, "At the end of second sampling period of "+what, sh, expectedLabels, 0, 1, 2, 2)
 }
 
-func expectHistogram(t *testing.T, when string, sh SamplingHistogram, buckets ...uint64) {
+func expectHistogram(t *testing.T, when string, sh SamplingHistogram, expectedLabels map[string]string, buckets ...uint64) {
 	metrics := make(chan prometheus.Metric, 2)
 	sh.Collect(metrics)
 	var dtom dto.Metric
@@ -74,7 +106,10 @@ func expectHistogram(t *testing.T, when string, sh SamplingHistogram, buckets ..
 		t.Errorf("%s, collected more than one Metric; second Metric = %#+v", when, metric)
 	default:
 	}
-	missingLabels := map[string]string{"l1": "v1", "l2": "v2"}
+	missingLabels := make(map[string]string, len(expectedLabels))
+	for k, v := range expectedLabels {
+		missingLabels[k] = v
+	}
 	for _, lp := range dtom.Label {
 		if lp == nil || lp.Name == nil || lp.Value == nil {
 			continue

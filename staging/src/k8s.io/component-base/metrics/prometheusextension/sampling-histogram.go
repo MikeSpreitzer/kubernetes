@@ -55,31 +55,43 @@ type SamplingHistogramOpts struct {
 
 // NewSamplingHistogram creates a new SamplingHistogram
 func NewSamplingHistogram(opts SamplingHistogramOpts) (SamplingHistogram, error) {
+	if opts.SamplingPeriod <= 0 {
+		return nil, fmt.Errorf("the given sampling period was %v but must be positive", opts.SamplingPeriod)
+	}
 	return NewTestableSamplingHistogram(clock.RealClock{}, opts)
 }
 
 // NewTestableSamplingHistogram creates a SamplingHistogram that uses a mockable clock
 func NewTestableSamplingHistogram(clock clock.Clock, opts SamplingHistogramOpts) (SamplingHistogram, error) {
+	if opts.SamplingPeriod <= 0 {
+		return nil, fmt.Errorf("the given sampling period was %v but must be positive", opts.SamplingPeriod)
+	}
 	desc := prometheus.NewDesc(
 		prometheus.BuildFQName(opts.Namespace, opts.Subsystem, opts.Name),
 		opts.Help,
 		nil,
 		opts.ConstLabels,
 	)
-	return newSamplingHistogram(clock, desc, opts)
+	return newSamplingHistogram(clock, desc, opts), nil
 }
 
-func newSamplingHistogram(clock clock.Clock, desc *prometheus.Desc, opts SamplingHistogramOpts, labelValues ...string) (SamplingHistogram, error) {
-	if opts.SamplingPeriod <= 0 {
-		return nil, fmt.Errorf("the given sampling period was %v but must be positive", opts.SamplingPeriod)
+func newSamplingHistogram(clock clock.Clock, desc *prometheus.Desc, opts SamplingHistogramOpts, labelValues ...string) SamplingHistogram {
+	allLabels := prometheus.MakeLabelPairs(desc, labelValues)
+	innerOpts := opts.HistogramOpts
+	innerOpts.ConstLabels = make(map[string]string, len(allLabels))
+	for _, nv := range allLabels {
+		if nv == nil || nv.Name == nil || nv.Value == nil {
+			continue
+		}
+		innerOpts.ConstLabels[*nv.Name] = *nv.Value
 	}
 	return &samplingHistogram{
 		samplingPeriod:  opts.SamplingPeriod,
-		histogram:       prometheus.NewHistogram(opts.HistogramOpts),
+		histogram:       prometheus.NewHistogram(innerOpts),
 		clock:           clock,
 		lastSampleIndex: clock.Now().UnixNano() / int64(opts.SamplingPeriod),
 		value:           opts.InitialValue,
-	}, nil
+	}
 }
 
 type samplingHistogram struct {
@@ -134,4 +146,107 @@ func (sh *samplingHistogram) Describe(ch chan<- *prometheus.Desc) {
 func (sh *samplingHistogram) Collect(ch chan<- prometheus.Metric) {
 	sh.Add(0)
 	sh.histogram.Collect(ch)
+}
+
+// SamplingHistogramVec is a Collector that bundles a set of SamplingHistograms that all share the
+// same Desc, but have different values for their variable labels. This is used
+// if you want to monitor a set of variables arrayed in various dimensions
+// (e.g. HTTP server occupancy, partitioned by resource and method). Create
+// instances with NewSamplingHistogramVec.
+type SamplingHistogramVec struct {
+	*prometheus.MetricVec
+}
+
+// NewSamplingHistogramVec creates a new SamplingHistogramVec based on the provided SamplingHistogramOpts and
+// partitioned by the given label names.
+func NewSamplingHistogramVec(opts SamplingHistogramOpts, labelNames []string) (*SamplingHistogramVec, error) {
+	if opts.SamplingPeriod <= 0 {
+		return nil, fmt.Errorf("the given sampling period was %v but must be positive", opts.SamplingPeriod)
+	}
+	return NewTestableSamplingHistogramVec(clock.RealClock{}, opts, labelNames)
+}
+
+// NewSamplingHistogramVec creates a new SamplingHistogramVec based on the provided SamplingHistogramOpts and
+// partitioned by the given label names.
+func NewTestableSamplingHistogramVec(clock clock.Clock, opts SamplingHistogramOpts, labelNames []string) (*SamplingHistogramVec, error) {
+	if opts.SamplingPeriod <= 0 {
+		return nil, fmt.Errorf("the given sampling period was %v but must be positive", opts.SamplingPeriod)
+	}
+	desc := prometheus.NewDesc(
+		prometheus.BuildFQName(opts.Namespace, opts.Subsystem, opts.Name),
+		opts.Help,
+		labelNames,
+		opts.ConstLabels,
+	)
+	return &SamplingHistogramVec{
+		MetricVec: prometheus.NewMetricVec(desc, func(lvs ...string) prometheus.Metric {
+			return newSamplingHistogram(clock, desc, opts, lvs...)
+		}),
+	}, nil
+}
+
+// FloatVar is the interface used by clients to add data to a SamplingHistogram
+type FloatVar interface {
+	Set(float64)
+	Add(float64)
+}
+
+// FloatVarVec is an interface implemented by `SamplingHistogramVec`
+type FloatVarVec interface {
+	GetMetricWith(prometheus.Labels) (FloatVar, error)
+	GetMetricWithLabelValues(lvs ...string) (FloatVar, error)
+	With(prometheus.Labels) FloatVar
+	WithLabelValues(...string) FloatVar
+	CurryWith(prometheus.Labels) (FloatVarVec, error)
+	MustCurryWith(prometheus.Labels) FloatVarVec
+
+	prometheus.Collector
+}
+
+func (v *SamplingHistogramVec) GetMetricWithLabelValues(lvs ...string) (FloatVar, error) {
+	metric, err := v.MetricVec.GetMetricWithLabelValues(lvs...)
+	if metric != nil {
+		return metric.(FloatVar), err
+	}
+	return nil, err
+}
+
+func (v *SamplingHistogramVec) GetMetricWith(labels prometheus.Labels) (FloatVar, error) {
+	metric, err := v.MetricVec.GetMetricWith(labels)
+	if metric != nil {
+		return metric.(FloatVar), err
+	}
+	return nil, err
+}
+
+func (v *SamplingHistogramVec) WithLabelValues(lvs ...string) FloatVar {
+	h, err := v.GetMetricWithLabelValues(lvs...)
+	if err != nil {
+		panic(err)
+	}
+	return h
+}
+
+func (v *SamplingHistogramVec) With(labels prometheus.Labels) FloatVar {
+	h, err := v.GetMetricWith(labels)
+	if err != nil {
+		panic(err)
+	}
+	return h
+}
+
+func (v *SamplingHistogramVec) CurryWith(labels prometheus.Labels) (FloatVarVec, error) {
+	vec, err := v.MetricVec.CurryWith(labels)
+	if vec != nil {
+		return &SamplingHistogramVec{vec}, err
+	}
+	return nil, err
+}
+
+func (v *SamplingHistogramVec) MustCurryWith(labels prometheus.Labels) FloatVarVec {
+	vec, err := v.CurryWith(labels)
+	if err != nil {
+		panic(err)
+	}
+	return vec
 }
