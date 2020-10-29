@@ -2604,13 +2604,13 @@ func printPriorityLevelConfiguration(obj *flowcontrol.PriorityLevelConfiguration
 		}
 	}
 	limits := []string{}
-	if someUnlimited {
-		limits = append(limits, "nil")
-	}
 	if minLimit == maxLimit {
 		limits = append(limits, strconv.FormatInt(int64(minLimit), 10))
 	} else if minLimit < maxLimit {
 		limits = append(limits, fmt.Sprintf("%d-%d", minLimit, maxLimit))
+	}
+	if someUnlimited {
+		limits = append(limits, "unlimited")
 	}
 	row.Cells = append(row.Cells, name, string(obj.Spec.Type), acs, queues, handSize, queueLengthLimit, translateTimestampSince(obj.CreationTimestamp), strings.Join(limits, ","))
 
