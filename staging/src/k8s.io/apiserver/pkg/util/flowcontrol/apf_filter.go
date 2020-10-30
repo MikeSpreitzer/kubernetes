@@ -74,7 +74,10 @@ type Interface interface {
 // The idHint IP address is used to form the ID used to post
 // concurrency limits in PriorityLevelConfigurationStatus.  If that IP
 // is unspecified (i.e., zero) or loopback then a distinctive address
-// of the same family is chosen.
+// of the same family is chosen.  This way of identifying API servers
+// is a temporary expedient, to be replaced once
+// https://github.com/kubernetes/enhancements/issues/1965 is
+// sufficiently mature.
 func New(
 	informerFactory kubeinformers.SharedInformerFactory,
 	flowcontrolClient flowcontrolclient.FlowcontrolV1beta1Interface,

@@ -400,6 +400,9 @@ func (cfgCtlr *configController) isNews(newPLs []*fctypesv1a1.PriorityLevelConfi
 		return true
 	}
 	for _, pl := range newPLs {
+		// Note that pl.Generation >= 1, so the following test will
+		// succeed if the UID is not in the priorityLevelGenerations
+		// map
 		if pl.Generation != cfgCtlr.priorityLevelGenerations[pl.UID] {
 			return true
 		}
@@ -408,6 +411,8 @@ func (cfgCtlr *configController) isNews(newPLs []*fctypesv1a1.PriorityLevelConfi
 		return true
 	}
 	for _, fs := range newFSs {
+		// Note that pl.Generation >= 1, so the following test will
+		// succeed if the UID is not in the flowSchemaGenerations map
 		if fs.Generation != cfgCtlr.flowSchemaGenerations[fs.UID] {
 			return true
 		}
