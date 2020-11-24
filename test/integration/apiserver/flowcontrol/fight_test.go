@@ -79,6 +79,7 @@ func TestConfigConsumerFight(t *testing.T) {
 		defer rvMutex.Unlock()
 		notifiedRVs[invert][i] = map[string]string{}
 	})
+	var informerFactory informers.SharedInformerFactory
 	foreach(func(invert bool, i int) {
 		myConfig := rest.CopyConfig(loopbackConfig)
 		myConfig = rest.AddUserAgent(myConfig, fmt.Sprintf("invert=%v, i=%d", invert, i))
@@ -105,7 +106,7 @@ func TestConfigConsumerFight(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		informerFactory := informers.NewSharedInformerFactory(myClientset, 0)
+		informerFactory = informers.NewSharedInformerFactory(myClientset, 0)
 		fieldMgr := utilfc.ConfigConsumerAsFieldManager
 		foundToDangling := func(found bool) bool { return !found }
 		if invert {
@@ -172,7 +173,7 @@ func TestConfigConsumerFight(t *testing.T) {
 			func() {
 				rvMutex.Lock()
 				defer rvMutex.Unlock()
-				t.Logf("For size=%d, j=%d, lastRVs=%v but notifiedRVs=%#+v", size, j, lastRVs, notifiedRVs)
+				t.Logf("For size=%d, j=%d, lastRVs=%v but notifiedRVs=%#+v and informerFactory=%#+v", size, j, lastRVs, notifiedRVs, informerFactory)
 			}()
 			someTimedOut = true
 		}
