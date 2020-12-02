@@ -78,18 +78,53 @@ func New(
 	requestWaitLimit time.Duration,
 ) Interface {
 	grc := counter.NoOp{}
+	clk := clock.RealClock{}
 	return NewTestable(TestableConfig{
+		Name:                   "Controller",
+		Clock:                  clk,
+		AsFieldManager:         ConfigConsumerAsFieldManager,
 		InformerFactory:        informerFactory,
 		FlowcontrolClient:      flowcontrolClient,
 		ServerConcurrencyLimit: serverConcurrencyLimit,
 		RequestWaitLimit:       requestWaitLimit,
 		ObsPairGenerator:       metrics.PriorityLevelConcurrencyObserverPairGenerator,
-		QueueSetFactory:        fqs.NewQueueSetFactory(&clock.RealClock{}, grc),
+		QueueSetFactory:        fqs.NewQueueSetFactory(clk, grc),
 	})
+}
+
+// TestableInterface adds the methods used in integration tests
+type TestableInterface interface {
+	Interface
+
+	// WaitForCacheSync waits for the caches of the informers of the
+	// implementation to sync.
+	WaitForCacheSync(stopCh <-chan struct{}) bool
+
+	// SyncOne attempts to sync all the API Priority and Fairness
+	// config objects.  Writes to FlowSchema objects are recorded in
+	// the given map, with an entry mapping
+	// `cache.MetaNamespaceKeyFunc(fs)` to `fs.ResourceVersion`.  This
+	// method is public so that integration tests can exercise
+	// controller functionality synchronously rather than having to
+	// sleep and hope the sleep was long enough.
+	SyncOne(flowSchemaRVs map[string]string) (specificDelay time.Duration, err error)
 }
 
 // TestableConfig carries the parameters to an implementation that is testable
 type TestableConfig struct {
+	// Name of the controller
+	Name string
+
+	// Clock to use in timing deliberate delays
+	Clock clock.PassiveClock
+
+	// AsFieldManager is the string to use in the metadata for
+	// server-side apply.  Normally this is
+	// `ConfigConsumerAsFieldManager`.  This is exposed as a parameter
+	// so that a test of competing controllers can supply different
+	// values.
+	AsFieldManager string
+
 	// InformerFactory to use in building the controller
 	InformerFactory kubeinformers.SharedInformerFactory
 
@@ -110,7 +145,7 @@ type TestableConfig struct {
 }
 
 // NewTestable is extra flexible to facilitate testing
-func NewTestable(config TestableConfig) Interface {
+func NewTestable(config TestableConfig) TestableInterface {
 	return newTestableController(config)
 }
 
