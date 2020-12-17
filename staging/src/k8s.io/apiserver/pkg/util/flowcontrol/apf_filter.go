@@ -106,7 +106,10 @@ type TestableInterface interface {
 	// SyncOne attempts to sync all the API Priority and Fairness
 	// config objects.  Writes to FlowSchema objects are recorded in
 	// the given map, with an entry mapping
-	// `cache.MetaNamespaceKeyFunc(fs)` to `fs.ResourceVersion`.
+	// `cache.MetaNamespaceKeyFunc(fs)` to `fs.ResourceVersion`.  This
+	// method is public so that integration tests can exercise
+	// controller functionality synchronously rather than having to
+	// sleep and hope the sleep was long enough.
 	SyncOne(flowSchemaRVs map[string]string) SyncReport
 }
 
@@ -124,7 +127,11 @@ type TestableConfig struct {
 	// case of a delete, it might be a `DeletedFinalStateUnknown`.
 	FinishHandlingNotification func(wq workqueue.RateLimitingInterface, obj interface{})
 
-	// AsFieldManager is the string to use in the metadata for server-side apply
+	// AsFieldManager is the string to use in the metadata for
+	// server-side apply.  Normally this is
+	// `ConfigConsumerAsFieldManager`.  This is exposed as a parameter
+	// so that a test of competing controllers can supply different
+	// values.
 	AsFieldManager string
 
 	// FoundToDangling maps the boolean indicating whether a
