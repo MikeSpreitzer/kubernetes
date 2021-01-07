@@ -93,18 +93,22 @@ func NewSampleAndWaterMarkHistogramsGenerator(clock clock.PassiveClock, samplePe
 		}}
 }
 
-func (swg *sampleAndWaterMarkObserverGenerator) quantize(when time.Time) int64 {
+func (swg *sampleAndWaterMarkObserverGenerator) quantize(when time.Time) (int64, time.Time) {
 	diff := when.Sub(swg.t0)
 	if diff < -370*24*time.Hour || diff > 370*24*time.Hour {
 		klog.Errorf("quantize: time made big jump from t0=%s to when=%s", swg.t0, when)
 	}
-	return int64(diff / swg.samplePeriod)
+	return int64(diff / swg.samplePeriod), when
 }
 
 // Generate makes a new TimedObserver
 func (swg *sampleAndWaterMarkObserverGenerator) Generate(x, x1 float64, labelValues []string) TimedObserver {
 	relX := x / x1
 	when := swg.clock.Now()
+	whenInt, whenEcho := swg.quantize(when)
+	if when != whenEcho {
+		klog.Errorf("Generate: arg passing mixup, when=%s, whenEcho=%s", when, whenEcho)
+	}
 	return &sampleAndWaterMarkHistograms{
 		sampleAndWaterMarkObserverGenerator: swg,
 		labelValues:                         labelValues,
@@ -113,7 +117,7 @@ func (swg *sampleAndWaterMarkObserverGenerator) Generate(x, x1 float64, labelVal
 		x1:                                  x1,
 		sampleAndWaterMarkAccumulator: sampleAndWaterMarkAccumulator{
 			lastSet:    when,
-			lastSetInt: swg.quantize(when),
+			lastSetInt: whenInt,
 			x:          x,
 			relX:       relX,
 			loRelX:     relX,
@@ -171,8 +175,12 @@ func (saw *sampleAndWaterMarkHistograms) innerSet(updateXOrX1 func()) {
 	func() {
 		saw.Lock()
 		defer saw.Unlock()
+		var whenEcho time.Time
 		when = saw.clock.Now()
-		whenInt = saw.quantize(when)
+		whenInt, whenEcho = saw.quantize(when)
+		if whenEcho != when {
+			klog.Errorf("Argument passing messed up!  when=%s, whenEcho=%s", when, whenEcho)
+		}
 		acc = saw.sampleAndWaterMarkAccumulator
 		wellOrdered = !when.Before(acc.lastSet)
 		updateXOrX1()
