@@ -94,7 +94,11 @@ func NewSampleAndWaterMarkHistogramsGenerator(clock clock.PassiveClock, samplePe
 }
 
 func (swg *sampleAndWaterMarkObserverGenerator) quantize(when time.Time) int64 {
-	return int64(when.Sub(swg.t0) / swg.samplePeriod)
+	diff := when.Sub(swg.t0)
+	if diff < -370*24*time.Hour || diff > 370*24*time.Hour {
+		klog.Errorf("quantize: time made big jump from t0=%s to when=%s", swg.t0, when)
+	}
+	return int64(diff / swg.samplePeriod)
 }
 
 // Generate makes a new TimedObserver
