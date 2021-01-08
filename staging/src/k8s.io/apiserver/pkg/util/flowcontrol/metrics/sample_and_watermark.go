@@ -93,7 +93,8 @@ func NewSampleAndWaterMarkHistogramsGenerator(clock clock.PassiveClock, samplePe
 		}}
 }
 
-// quantize calculates the number of sampling periods since swg.t0
+// quantize calculates the number of sampling periods since swg.t0 .
+// The pass-by-reference is a failed attempt to tiptoe around https://github.com/golang/go/issues/43570 .
 func (swg *sampleAndWaterMarkObserverGenerator) quantize(when *time.Time) int64 {
 	return int64(when.Sub(swg.t0) / swg.samplePeriod)
 }
