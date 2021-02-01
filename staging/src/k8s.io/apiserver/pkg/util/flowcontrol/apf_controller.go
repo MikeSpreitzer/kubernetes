@@ -395,7 +395,7 @@ func (cfgCtlr *configController) syncOne(flowSchemaRVs map[string]string) (speci
 	return cfgCtlr.digestConfigObjects(newPLs, newFSs, flowSchemaRVs)
 }
 
-func (cfgCtlr *configController) isNews(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) bool {
+func (cfgCtlr *configController) isNews(newPLs []*flowcontrol.PriorityLevelConfiguration, newFSs []*flowcontrol.FlowSchema) bool {
 	if len(newPLs) != len(cfgCtlr.priorityLevelGenerations) {
 		return true
 	}
@@ -463,22 +463,18 @@ type fsStatusUpdate struct {
 // cfgCtlr and writes its consequent new configState.
 // Only invoke this in the one and only worker goroutine
 func (cfgCtlr *configController) digestConfigObjects(newPLs []*flowcontrol.PriorityLevelConfiguration, newFSs []*flowcontrol.FlowSchema, flowSchemaRVs map[string]string) (time.Duration, error) {
-	fsStatusUpdates := cfgCtlr.lockAndDigestConfigObjects(newPLs, newFSs)
 	var suggestedDelay time.Duration
 	var errs []error
 	if cfgCtlr.isNews(newPLs, newFSs) {
 		var fsStatusUpdates []fsStatusUpdate
 		fsStatusUpdates, cfgCtlr.plConcurrencyLimits = cfgCtlr.lockAndDigestConfigObjects(newPLs, newFSs)
-		suggestedDelay, errs = cfgCtlr.doFSStatusUpdates(fsStatusUpdates)
+		suggestedDelay, errs = cfgCtlr.doFSStatusUpdates(fsStatusUpdates, flowSchemaRVs)
 	}
 	errs = append(errs, cfgCtlr.doPLCStatusUpdates(newPLs, cfgCtlr.plConcurrencyLimits)...)
-	if len(errs) == 0 {
-		return nil
-	}
 	return suggestedDelay, utilerrors.NewAggregate(errs)
 }
 
-func (cfgCtlr *configController) doFSStatusUpdates(fsStatusUpdates []fsStatusUpdate) (time.Duration, []error) {
+func (cfgCtlr *configController) doFSStatusUpdates(fsStatusUpdates []fsStatusUpdate, flowSchemaRVs map[string]string) (time.Duration, []error) {
 	var errs []error
 	currResult := updateAttempt{
 		timeUpdated:  cfgCtlr.clock.Now(),
@@ -551,7 +547,7 @@ func (cfgCtlr *configController) addUpdateResult(result updateAttempt) {
 	cfgCtlr.mostRecentUpdates = append([]updateAttempt{result}, cfgCtlr.mostRecentUpdates...)
 }
 
-func (cfgCtlr *configController) doPLCStatusUpdates(newPLs []*fctypesv1a1.PriorityLevelConfiguration, plConcurrencyLimits map[string]*int32) []error {
+func (cfgCtlr *configController) doPLCStatusUpdates(newPLs []*flowcontrol.PriorityLevelConfiguration, plConcurrencyLimits map[string]*int32) []error {
 	var errs []error
 	for _, pl := range newPLs {
 		newLimit := plConcurrencyLimits[pl.Name]
@@ -559,8 +555,8 @@ func (cfgCtlr *configController) doPLCStatusUpdates(newPLs []*fctypesv1a1.Priori
 		if oldStatus != nil && (newLimit == oldStatus.Limit || newLimit != nil && oldStatus.Limit != nil && *newLimit == *oldStatus.Limit) {
 			continue
 		}
-		plStatus := fctypesv1a1.PriorityLevelConfigurationStatus{
-			ConcurrencyLimits: []fctypesv1a1.ConcurrencyLimitStatus{{
+		plStatus := flowcontrol.PriorityLevelConfigurationStatus{
+			ConcurrencyLimits: []flowcontrol.ConcurrencyLimitStatus{{
 				APIServer: cfgCtlr.id,
 				Limit:     newLimit,
 			}},
@@ -579,7 +575,7 @@ func (cfgCtlr *configController) doPLCStatusUpdates(newPLs []*fctypesv1a1.Priori
 	return errs
 }
 
-func getPLConcurrencyLimit(pl *fctypesv1a1.PriorityLevelConfiguration, id string) *fctypesv1a1.ConcurrencyLimitStatus {
+func getPLConcurrencyLimit(pl *flowcontrol.PriorityLevelConfiguration, id string) *flowcontrol.ConcurrencyLimitStatus {
 	for _, cl := range pl.Status.ConcurrencyLimits {
 		if cl.APIServer == id {
 			return &cl
@@ -588,7 +584,7 @@ func getPLConcurrencyLimit(pl *fctypesv1a1.PriorityLevelConfiguration, id string
 	return nil
 }
 
-func (cfgCtlr *configController) lockAndDigestConfigObjects(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) ([]fsStatusUpdate, map[string]*int32) {
+func (cfgCtlr *configController) lockAndDigestConfigObjects(newPLs []*flowcontrol.PriorityLevelConfiguration, newFSs []*flowcontrol.FlowSchema) ([]fsStatusUpdate, map[string]*int32) {
 	cfgCtlr.lock.Lock()
 	defer cfgCtlr.lock.Unlock()
 	meal := cfgMeal{

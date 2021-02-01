@@ -577,7 +577,7 @@ func AddHandlers(h printers.PrintHandler) {
 		{Name: "HandSize", Type: "string", Description: flowcontrolv1beta1.QueuingConfiguration{}.SwaggerDoc()["handSize"]},
 		{Name: "QueueLengthLimit", Type: "string", Description: flowcontrolv1beta1.QueuingConfiguration{}.SwaggerDoc()["queueLengthLimit"]},
 		{Name: "Age", Type: "string", Description: metav1.ObjectMeta{}.SwaggerDoc()["creationTimestamp"]},
-		{Name: "ConcurrencyLimit", Type: "string", Description: flowcontrolv1alpha1.ConcurrencyLimitStatus{}.SwaggerDoc()["limit"]},
+		{Name: "ConcurrencyLimit", Type: "string", Description: flowcontrolv1beta1.ConcurrencyLimitStatus{}.SwaggerDoc()["limit"]},
 	}
 	h.TableHandler(priorityLevelColumnDefinitions, printPriorityLevelConfiguration)
 	h.TableHandler(priorityLevelColumnDefinitions, printPriorityLevelConfigurationList)
