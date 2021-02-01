@@ -339,7 +339,7 @@ func (cfgCtlr *configController) syncOne() bool {
 	return false
 }
 
-func (cfgCtlr *configController) isNews(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) bool {
+func (cfgCtlr *configController) isNews(newPLs []*flowcontrol.PriorityLevelConfiguration, newFSs []*flowcontrol.FlowSchema) bool {
 	if len(newPLs) != len(cfgCtlr.priorityLevelGenerations) {
 		return true
 	}
@@ -405,7 +405,7 @@ type fsStatusUpdate struct {
 
 // digestConfigObjects is given all the API objects that configure
 // cfgCtlr and writes its consequent new configState.
-func (cfgCtlr *configController) digestConfigObjects(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) error {
+func (cfgCtlr *configController) digestConfigObjects(newPLs []*flowcontrol.PriorityLevelConfiguration, newFSs []*flowcontrol.FlowSchema) error {
 	var errs []error
 	if cfgCtlr.isNews(newPLs, newFSs) {
 		var fsStatusUpdates []fsStatusUpdate
@@ -446,7 +446,7 @@ func (cfgCtlr *configController) doFSStatusUpdates(fsStatusUpdates []fsStatusUpd
 	return errs
 }
 
-func (cfgCtlr *configController) doPLCStatusUpdates(newPLs []*fctypesv1a1.PriorityLevelConfiguration, plConcurrencyLimits map[string]*int32) []error {
+func (cfgCtlr *configController) doPLCStatusUpdates(newPLs []*flowcontrol.PriorityLevelConfiguration, plConcurrencyLimits map[string]*int32) []error {
 	var errs []error
 	for _, pl := range newPLs {
 		newLimit := plConcurrencyLimits[pl.Name]
@@ -454,8 +454,8 @@ func (cfgCtlr *configController) doPLCStatusUpdates(newPLs []*fctypesv1a1.Priori
 		if oldStatus != nil && (newLimit == oldStatus.Limit || newLimit != nil && oldStatus.Limit != nil && *newLimit == *oldStatus.Limit) {
 			continue
 		}
-		plStatus := fctypesv1a1.PriorityLevelConfigurationStatus{
-			ConcurrencyLimits: []fctypesv1a1.ConcurrencyLimitStatus{{
+		plStatus := flowcontrol.PriorityLevelConfigurationStatus{
+			ConcurrencyLimits: []flowcontrol.ConcurrencyLimitStatus{{
 				APIServer: cfgCtlr.id,
 				Limit:     newLimit,
 			}},
@@ -474,7 +474,7 @@ func (cfgCtlr *configController) doPLCStatusUpdates(newPLs []*fctypesv1a1.Priori
 	return errs
 }
 
-func getPLConcurrencyLimit(pl *fctypesv1a1.PriorityLevelConfiguration, id string) *fctypesv1a1.ConcurrencyLimitStatus {
+func getPLConcurrencyLimit(pl *flowcontrol.PriorityLevelConfiguration, id string) *flowcontrol.ConcurrencyLimitStatus {
 	for _, cl := range pl.Status.ConcurrencyLimits {
 		if cl.APIServer == id {
 			return &cl
@@ -483,7 +483,7 @@ func getPLConcurrencyLimit(pl *fctypesv1a1.PriorityLevelConfiguration, id string
 	return nil
 }
 
-func (cfgCtlr *configController) lockAndDigestConfigObjects(newPLs []*fctypesv1a1.PriorityLevelConfiguration, newFSs []*fctypesv1a1.FlowSchema) ([]fsStatusUpdate, map[string]*int32) {
+func (cfgCtlr *configController) lockAndDigestConfigObjects(newPLs []*flowcontrol.PriorityLevelConfiguration, newFSs []*flowcontrol.FlowSchema) ([]fsStatusUpdate, map[string]*int32) {
 	cfgCtlr.lock.Lock()
 	defer cfgCtlr.lock.Unlock()
 	meal := cfgMeal{

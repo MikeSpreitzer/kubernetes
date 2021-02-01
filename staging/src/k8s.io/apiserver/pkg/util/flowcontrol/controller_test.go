@@ -367,6 +367,7 @@ func TestAPFControllerWithGracefulShutdown(t *testing.T) {
 		time.Minute,
 		metrics.PriorityLevelConcurrencyObserverPairGenerator,
 		cts,
+		nil,
 	})
 
 	stopCh, controllerCompletedCh := make(chan struct{}), make(chan struct{})
