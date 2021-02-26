@@ -18,6 +18,8 @@ package prometheusextension
 
 import (
 	"fmt"
+	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -43,7 +45,18 @@ type SamplingHistogram interface {
 // SamplingHistogram metric.  This builds on the options for creating
 // a Histogram metric.
 type SamplingHistogramOpts struct {
-	prometheus.HistogramOpts
+	Namespace   string
+	Subsystem   string
+	Name        string
+	Help        string
+	ConstLabels prometheus.Labels
+
+	// Buckets defines the buckets into which observations are counted. Each
+	// element in the slice is the upper inclusive bound of a bucket. The
+	// values must be sorted in strictly increasing order. There is no need
+	// to add a highest bucket with +Inf bound, it will be added
+	// implicitly. The default value is DefBuckets.
+	Buckets []float64
 
 	// The initial value of the variable.
 	InitialValue float64
@@ -69,28 +82,55 @@ func NewTestableSamplingHistogram(clock clock.Clock, opts SamplingHistogramOpts)
 	return newSamplingHistogram(clock, desc, opts)
 }
 
-func newSamplingHistogram(clock clock.Clock, desc *prometheus.Desc, opts SamplingHistogramOpts, labelValues ...string) (SamplingHistogram, error) {
+func newSamplingHistogram(clock clock.Clock, desc *prometheus.Desc, opts SamplingHistogramOpts) (SamplingHistogram, error) {
 	if opts.SamplingPeriod <= 0 {
 		return nil, fmt.Errorf("the given sampling period was %v but must be positive", opts.SamplingPeriod)
 	}
+	if len(opts.Buckets) == 0 {
+		opts.Buckets = prometheus.DefBuckets
+	}
+
+	for i, upperBound := range opts.Buckets {
+		if i < len(opts.Buckets)-1 {
+			if upperBound >= opts.Buckets[i+1] {
+				return nil, fmt.Errorf(
+					"histogram buckets must be in increasing order: %f >= %f",
+					upperBound, opts.Buckets[i+1],
+				)
+			}
+		} else {
+			if math.IsInf(upperBound, +1) {
+				// The +Inf bucket is implicit. Remove it here.
+				opts.Buckets = opts.Buckets[:i]
+			}
+		}
+	}
+
 	return &samplingHistogram{
 		samplingPeriod:  opts.SamplingPeriod,
-		histogram:       prometheus.NewHistogram(opts.HistogramOpts),
+		desc:            desc,
 		clock:           clock,
 		lastSampleIndex: clock.Now().UnixNano() / int64(opts.SamplingPeriod),
 		value:           opts.InitialValue,
+		buckets:         make([]uint64, len(opts.Buckets)),
+		upperBounds:     opts.Buckets,
 	}, nil
 }
 
 type samplingHistogram struct {
 	samplingPeriod time.Duration
-	histogram      prometheus.Histogram
+	desc           *prometheus.Desc
 	clock          clock.Clock
 	lock           sync.Mutex
 
 	// identifies the last sampling period completed
 	lastSampleIndex int64
 	value           float64
+
+	sum         float64
+	count       uint64
+	buckets     []uint64
+	upperBounds []float64
 }
 
 var _ SamplingHistogram = &samplingHistogram{}
@@ -104,34 +144,50 @@ func (sh *samplingHistogram) Add(delta float64) {
 }
 
 func (sh *samplingHistogram) Update(updateFn func(float64) float64) {
-	oldValue, numSamples := func() (float64, int64) {
-		sh.lock.Lock()
-		defer sh.lock.Unlock()
-		newSampleIndex := sh.clock.Now().UnixNano() / int64(sh.samplingPeriod)
-		deltaIndex := newSampleIndex - sh.lastSampleIndex
-		sh.lastSampleIndex = newSampleIndex
-		oldValue := sh.value
-		sh.value = updateFn(sh.value)
-		return oldValue, deltaIndex
-	}()
-	for i := int64(0); i < numSamples; i++ {
-		sh.histogram.Observe(oldValue)
+	sh.lock.Lock()
+	defer sh.lock.Unlock()
+
+	newSampleIndex := sh.clock.Now().UnixNano() / int64(sh.samplingPeriod)
+	deltaIndex := uint64(newSampleIndex - sh.lastSampleIndex)
+	sh.lastSampleIndex = newSampleIndex
+	oldValue := sh.value
+	sh.value = updateFn(sh.value)
+
+	// Increment the actual histogram parts.
+	sh.count += deltaIndex
+	sh.sum += oldValue * float64(deltaIndex)
+	i := sort.SearchFloat64s(sh.upperBounds, oldValue)
+	if i < len(sh.buckets) {
+		sh.buckets[i] += deltaIndex
 	}
 }
 
 func (sh *samplingHistogram) Desc() *prometheus.Desc {
-	return sh.histogram.Desc()
+	return sh.desc
 }
 
 func (sh *samplingHistogram) Write(dest *dto.Metric) error {
-	return sh.histogram.Write(dest)
+	sh.lock.Lock()
+	defer sh.lock.Unlock()
+
+	buckets := make(map[float64]uint64, len(sh.buckets))
+	var cumCount uint64
+	for i, count := range sh.buckets {
+		cumCount += count
+		buckets[sh.upperBounds[i]] = cumCount
+	}
+	metric, err := prometheus.NewConstHistogram(sh.desc, sh.count, sh.sum, buckets)
+	if err != nil {
+		return err
+	}
+	return metric.Write(dest)
 }
 
 func (sh *samplingHistogram) Describe(ch chan<- *prometheus.Desc) {
-	sh.histogram.Describe(ch)
+	ch <- sh.desc
 }
 
 func (sh *samplingHistogram) Collect(ch chan<- prometheus.Metric) {
 	sh.Add(0)
-	sh.histogram.Collect(ch)
+	ch <- sh
 }

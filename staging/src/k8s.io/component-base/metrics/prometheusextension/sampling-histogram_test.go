@@ -28,14 +28,12 @@ import (
 func TestSamplingHistogram(t *testing.T) {
 	clk := testclock.NewFakeClock(time.Unix(time.Now().Unix(), 999999990))
 	sh, err := NewTestableSamplingHistogram(clk, SamplingHistogramOpts{
-		HistogramOpts: prometheus.HistogramOpts{
-			Namespace:   "test",
-			Subsystem:   "func",
-			Name:        "one",
-			Help:        "a helpful string",
-			ConstLabels: map[string]string{"l1": "v1", "l2": "v2"},
-			Buckets:     []float64{0, 1, 2},
-		},
+		Namespace:      "test",
+		Subsystem:      "func",
+		Name:           "one",
+		Help:           "a helpful string",
+		ConstLabels:    map[string]string{"l1": "v1", "l2": "v2"},
+		Buckets:        []float64{0, 1, 2},
 		InitialValue:   1,
 		SamplingPeriod: time.Second,
 	})
@@ -119,7 +117,7 @@ func expectHistogram(t *testing.T, when string, sh SamplingHistogram, buckets ..
 		}
 		expectedCount := buckets[i]
 		if expectedCount != *(mhBucket.CumulativeCount) {
-			t.Errorf("%s, bucket %d's count was %d rather than %d", when, i, mhBucket.CumulativeCount, expectedCount)
+			t.Errorf("%s, bucket %d's count was %d rather than %d", when, i, *(mhBucket.CumulativeCount), expectedCount)
 		}
 	}
 }

@@ -218,15 +218,13 @@ func (o *SamplingHistogramOpts) annotateStabilityLevel() {
 // convenience function to allow easy transformation to the prometheus
 // counterpart. This will do more once we have a proper label abstraction
 func (o *SamplingHistogramOpts) toPromSamplingHistogramOpts() promext.SamplingHistogramOpts {
-	return promext.SamplingHistogramOpts{
-		HistogramOpts: prometheus.HistogramOpts{
-			Namespace:   o.Namespace,
-			Subsystem:   o.Subsystem,
-			Name:        o.Name,
-			Help:        o.Help,
-			ConstLabels: o.ConstLabels,
-			Buckets:     o.Buckets,
-		},
+	return promext.SamplingHistogramOpts{ 
+		Namespace:      o.Namespace,
+		Subsystem:      o.Subsystem,
+		Name:           o.Name,
+		Help:           o.Help,
+		ConstLabels:    o.ConstLabels,
+		Buckets:        o.Buckets,
 		InitialValue:   o.InitialValue,
 		SamplingPeriod: o.SamplingPeriod,
 	}
