@@ -175,14 +175,19 @@ func getWriter(t *testing.T, mf []metav1.ManagedFieldsEntry) string {
 }
 
 func (ft *fightTest) createController(invert bool, i int) {
+	fieldMgr := fmt.Sprintf("testController%d%v", i, invert)
 	myConfig := rest.CopyConfig(ft.loopbackConfig)
-	myConfig = rest.AddUserAgent(myConfig, fmt.Sprintf("invert=%v, i=%d", invert, i))
+	myConfig = rest.AddUserAgent(myConfig, fieldMgr)
 	myClientset := clientset.NewForConfigOrDie(myConfig)
 	fcIfc := myClientset.FlowcontrolV1beta1()
 	informerFactory := informers.NewSharedInformerFactory(myClientset, 0)
-	fieldMgr := fmt.Sprintf("testController%d%v", i, invert)
+	foundToDangling := func(found bool) bool { return !found }
+	if invert {
+		foundToDangling = func(found bool) bool { return found }
+	}
 	ctlr := utilfc.NewTestable(utilfc.TestableConfig{
-		Name:                   fmt.Sprintf("Controller%d[invert=%v]", i, invert),
+		Name:                   fieldMgr,
+		FoundToDangling:        foundToDangling,
 		Clock:                  clock.RealClock{},
 		AsFieldManager:         fieldMgr,
 		InformerFactory:        informerFactory,

@@ -255,6 +255,7 @@ func TestConfigConsumer(t *testing.T) {
 				Name:                   "Controller",
 				Clock:                  clock.RealClock{},
 				AsFieldManager:         ConfigConsumerAsFieldManager,
+				FoundToDangling:        func(found bool) bool { return !found },
 				InformerFactory:        informerFactory,
 				FlowcontrolClient:      flowcontrolClient,
 				ServerConcurrencyLimit: 100,         // server concurrency limit
@@ -386,6 +387,7 @@ func TestAPFControllerWithGracefulShutdown(t *testing.T) {
 		Name:                   "Controller",
 		Clock:                  clock.RealClock{},
 		AsFieldManager:         ConfigConsumerAsFieldManager,
+		FoundToDangling:        func(found bool) bool { return !found },
 		InformerFactory:        informerFactory,
 		FlowcontrolClient:      flowcontrolClient,
 		ServerConcurrencyLimit: 100,

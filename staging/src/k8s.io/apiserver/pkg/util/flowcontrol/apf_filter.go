@@ -83,6 +83,7 @@ func New(
 		Name:                   "Controller",
 		Clock:                  clk,
 		AsFieldManager:         ConfigConsumerAsFieldManager,
+		FoundToDangling:        func(found bool) bool { return !found },
 		InformerFactory:        informerFactory,
 		FlowcontrolClient:      flowcontrolClient,
 		ServerConcurrencyLimit: serverConcurrencyLimit,
@@ -124,6 +125,13 @@ type TestableConfig struct {
 	// so that a test of competing controllers can supply different
 	// values.
 	AsFieldManager string
+
+	// FoundToDangling maps the boolean indicating whether a
+	// FlowSchema's referenced PLC exists to the boolean indicating
+	// that FlowSchema's status should indicate a dangling reference.
+	// This is a parameter so that we can write tests of what happens
+	// when servers disagree on that bit of Status.
+	FoundToDangling func(bool) bool
 
 	// InformerFactory to use in building the controller
 	InformerFactory kubeinformers.SharedInformerFactory
