@@ -23,6 +23,8 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/klog/v2"
+
 	jsonpatch "github.com/evanphx/json-patch"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -488,7 +490,12 @@ func (p *patcher) applyPatch(_ context.Context, _, currentObject runtime.Object)
 	} else if !currentObjectHasUID {
 		objToUpdate, patchErr = p.mechanism.createNewObject()
 	} else {
+		var curCopy runtime.Object
+		if klog.V(7).Enabled() {
+			curCopy = currentObject.DeepCopyObject()
+		}
 		objToUpdate, patchErr = p.mechanism.applyPatchToCurrentObject(currentObject)
+		klog.V(7).Infof("Patched %#+v to get #%+v", curCopy, objToUpdate)
 	}
 
 	if patchErr != nil {

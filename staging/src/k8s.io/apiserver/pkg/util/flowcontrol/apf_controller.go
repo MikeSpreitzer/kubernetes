@@ -628,13 +628,15 @@ func (cfgCtlr *configController) doPLCStatusUpdates(newPLs []*flowcontrol.Priori
 		if err != nil {
 			if !apierrors.IsNotFound(err) {
 				errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to set a ConcurrencyLimitStatus for PriorityLevelConfiguration %s", pl.Name)))
+			} else {
+				klog.V(5).Infof("%s failed to patch PLC %s because it no longer exists", cfgCtlr.name, pl.Name)
 			}
 		} else {
 			newStatus := getPLConcurrencyLimit(plPatched, cfgCtlr.id)
 			if newStatus == nil || !(newStatus.Limit == newLimit || *newStatus.Limit == *newLimit) {
 				klog.Warningf("%s patched PLC %s with %s but got back %s", cfgCtlr.name, pl.Name, string(enc), fcfmt.Fmt(plPatched))
 			} else {
-				klog.V(7).Infof("%s patched PLC %s with %s and got back %s", cfgCtlr.name, pl.Name, string(enc), fcfmt.Fmt(plPatched))
+				klog.V(7).Infof("%s patched PLC %s with %s and got back %s", cfgCtlr.name, fcfmt.Fmt(pl), string(enc), fcfmt.Fmt(plPatched))
 			}
 		}
 	}
