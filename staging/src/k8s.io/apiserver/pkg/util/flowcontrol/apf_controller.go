@@ -618,7 +618,12 @@ func (cfgCtlr *configController) doPLCStatusUpdates(newPLs []*flowcontrol.Priori
 			// should never happen because these are created here and well formed
 			panic(fmt.Sprintf("Failed to json.Marshall(%#+v): %s", plStatus, err.Error()))
 		}
-		klog.V(4).Infof("Writing %s to PriorityLevelConfiguration %s because the previous value was %s", string(enc), pl.Name, fcfmt.Fmt(oldStatus))
+		if !klog.V(4).Enabled() {
+		} else if klog.V(5).Enabled() {
+			klog.Infof("Writing %s to PriorityLevelConfiguration %s because the previous value was %s (obj=%s)", string(enc), pl.Name, fcfmt.Fmt(oldStatus), fcfmt.Fmt(pl))
+		} else {
+			klog.Infof("Writing %s to PriorityLevelConfiguration %s because the previous value was %s", string(enc), pl.Name, fcfmt.Fmt(oldStatus))
+		}
 		_, err = cfgCtlr.flowcontrolClient.PriorityLevelConfigurations().Patch(context.TODO(), pl.Name, apitypes.StrategicMergePatchType, []byte(fmt.Sprintf(`{"status": %s }`, string(enc))), metav1.PatchOptions{FieldManager: "api-priority-and-fairness-config-consumer-v1"}, "status")
 		if err != nil && !apierrors.IsNotFound(err) {
 			errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to set a ConcurrencyLimitStatus for PriorityLevelConfiguration %s", pl.Name)))

@@ -76,7 +76,7 @@ func (sr Stringer) String() string {
 	case cache.DeletedFinalStateUnknown:
 		return fmt.Sprintf("DeletedFinalStateUnknown{Key=%s, Obj=%s}", typed.Key, Fmt(typed.Obj))
 	case *cache.DeletedFinalStateUnknown:
-		return fmt.Sprintf("DeletedFinalStateUnknown{Key=%s, Obj=%s}", typed.Key, Fmt(typed.Obj))
+		return fmt.Sprintf("&DeletedFinalStateUnknown{Key=%s, Obj=%s}", typed.Key, Fmt(typed.Obj))
 	default:
 		return fmt.Sprintf("%#+v", sr.val)
 	}
