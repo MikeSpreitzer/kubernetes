@@ -128,6 +128,8 @@ message FlowSchemaSpec {
 // FlowSchemaStatus represents the current state of a FlowSchema.
 message FlowSchemaStatus {
   // `conditions` is a list of the current states of FlowSchema.
+  // +patchMergeKey=type
+  // +patchStrategy=merge
   // +listType=map
   // +listMapKey=type
   // +optional
@@ -319,6 +321,8 @@ message PriorityLevelConfigurationSpec {
 // PriorityLevelConfigurationStatus represents the current state of a "request-priority".
 message PriorityLevelConfigurationStatus {
   // `conditions` is the current state of "request-priority".
+  // +patchMergeKey=type
+  // +patchStrategy=merge
   // +listType=map
   // +listMapKey=type
   // +optional
@@ -326,6 +330,8 @@ message PriorityLevelConfigurationStatus {
 
   // `concurrencyLimits` indicates the concurrency limit that each
   // apiserver is enforcing for this priority level.
+  // +patchMergeKey=apiServer
+  // +patchStrategy=merge
   // +listType=map
   // +listMapKey=apiServer
   // +optional
