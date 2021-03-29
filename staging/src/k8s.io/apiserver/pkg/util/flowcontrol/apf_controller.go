@@ -624,9 +624,18 @@ func (cfgCtlr *configController) doPLCStatusUpdates(newPLs []*flowcontrol.Priori
 		} else {
 			klog.Infof("Writing %s to PriorityLevelConfiguration %s because the previous value was %s", string(enc), pl.Name, fcfmt.Fmt(oldStatus))
 		}
-		_, err = cfgCtlr.flowcontrolClient.PriorityLevelConfigurations().Patch(context.TODO(), pl.Name, apitypes.StrategicMergePatchType, []byte(fmt.Sprintf(`{"status": %s }`, string(enc))), metav1.PatchOptions{FieldManager: "api-priority-and-fairness-config-consumer-v1"}, "status")
-		if err != nil && !apierrors.IsNotFound(err) {
-			errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to set a ConcurrencyLimitStatus for PriorityLevelConfiguration %s", pl.Name)))
+		plPatched, err := cfgCtlr.flowcontrolClient.PriorityLevelConfigurations().Patch(context.TODO(), pl.Name, apitypes.StrategicMergePatchType, []byte(fmt.Sprintf(`{"status": %s }`, string(enc))), metav1.PatchOptions{FieldManager: cfgCtlr.asFieldManager}, "status")
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to set a ConcurrencyLimitStatus for PriorityLevelConfiguration %s", pl.Name)))
+			}
+		} else {
+			newStatus := getPLConcurrencyLimit(plPatched, cfgCtlr.id)
+			if newStatus == nil || !(newStatus.Limit == newLimit || *newStatus.Limit == *newLimit) {
+				klog.Warningf("%s patched PLC %s with %s but got back %s", cfgCtlr.name, pl.Name, string(enc), fcfmt.Fmt(plPatched))
+			} else {
+				klog.V(7).Infof("%s patched PLC %s with %s and got back %s", cfgCtlr.name, pl.Name, string(enc), fcfmt.Fmt(plPatched))
+			}
 		}
 	}
 	return errs
