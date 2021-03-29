@@ -292,6 +292,8 @@ type NonResourcePolicyRule struct {
 // FlowSchemaStatus represents the current state of a FlowSchema.
 type FlowSchemaStatus struct {
 	// `conditions` is a list of the current states of FlowSchema.
+	// +patchMergeKey=type
+	// +patchStrategy=merge
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -482,6 +484,8 @@ type PriorityLevelConfigurationConditionType string
 // PriorityLevelConfigurationStatus represents the current state of a "request-priority".
 type PriorityLevelConfigurationStatus struct {
 	// `conditions` is the current state of "request-priority".
+	// +patchMergeKey=type
+	// +patchStrategy=merge
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -489,6 +493,8 @@ type PriorityLevelConfigurationStatus struct {
 
 	// `concurrencyLimits` indicates the concurrency limit that each
 	// apiserver is enforcing for this priority level.
+	// +patchMergeKey=apiServer
+	// +patchStrategy=merge
 	// +listType=map
 	// +listMapKey=apiServer
 	// +optional
