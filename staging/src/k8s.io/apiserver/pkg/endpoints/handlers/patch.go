@@ -400,6 +400,7 @@ func (p *smpPatcher) applyPatchToCurrentObject(currentObject runtime.Object) (ru
 	if err := strategicPatchObject(p.defaulter, currentVersionedObject, p.patchBytes, versionedObjToUpdate, p.schemaReferenceObj); err != nil {
 		return nil, err
 	}
+	klog.V(7).Infof("smp patched %#+v by %#+v to get %#+v", currentVersionedObject, string(p.patchBytes), versionedObjToUpdate)
 	// Convert the object back to the hub version
 	newObj, err := p.unsafeConvertor.ConvertToVersion(versionedObjToUpdate, p.hubGroupVersion)
 	if err != nil {
