@@ -139,6 +139,11 @@ type configController struct {
 	// is mutable; every slice stored in it is deeply immutable.
 	flowSchemas apihelpers.FlowSchemaSequence
 
+	// Maps flow schema name to object.  This field is only accessed
+	// by digestConfigObjects, all of whose invocations are totally
+	// ordered.  This field is used to avoid repeating identical work.
+	flowSchemasByName map[string]*flowcontrol.FlowSchema
+
 	// priorityLevelStates maps the PriorityLevelConfiguration object
 	// name to the state for that level.  Every name referenced from a
 	// member of `flowSchemas` has an entry here.
@@ -217,6 +222,7 @@ func newTestableController(config TestableConfig) *configController {
 		requestWaitLimit:       config.RequestWaitLimit,
 		flowcontrolClient:      config.FlowcontrolClient,
 		id:                     makeID(config.IDHint),
+		flowSchemasByName:      make(map[string]*flowcontrol.FlowSchema),
 		priorityLevelStates:    make(map[string]*priorityLevelState),
 	}
 	klog.V(2).Infof("NewTestableController %q with serverConcurrencyLimit=%d, requestWaitLimit=%s, name=%s, asFieldManager=%q", cfgCtlr.id, cfgCtlr.serverConcurrencyLimit, cfgCtlr.requestWaitLimit, cfgCtlr.name, cfgCtlr.asFieldManager)
@@ -402,7 +408,9 @@ func (cfgCtlr *configController) processNextWorkItem() bool {
 
 	func(obj interface{}) {
 		defer cfgCtlr.configQueue.Done(obj)
-		specificDelay, err := cfgCtlr.syncOne(map[string]string{})
+		klog.V(5).Infof("%s syncOne starting at %s", cfgCtlr.name, cfgCtlr.clock.Now().Format(timeFmt))
+		specificDelay, err := cfgCtlr.syncOne()
+		klog.V(5).Infof("%s syncOne returned specificDelay=%s, err=%w", cfgCtlr.name, specificDelay, err)
 		switch {
 		case err != nil:
 			klog.Error(err)
@@ -421,8 +429,7 @@ func (cfgCtlr *configController) processNextWorkItem() bool {
 // objects that configure API Priority and Fairness and updates the
 // local configController accordingly.
 // Only invoke this in the one and only worker goroutine
-func (cfgCtlr *configController) syncOne(flowSchemaRVs map[string]string) (specificDelay time.Duration, err error) {
-	klog.V(5).Infof("%s syncOne at %s", cfgCtlr.name, cfgCtlr.clock.Now().Format(timeFmt))
+func (cfgCtlr *configController) syncOne() (specificDelay time.Duration, err error) {
 	all := labels.Everything()
 	newPLs, err := cfgCtlr.plLister.List(all)
 	if err != nil {
@@ -432,9 +439,10 @@ func (cfgCtlr *configController) syncOne(flowSchemaRVs map[string]string) (speci
 	if err != nil {
 		return 0, fmt.Errorf("unable to list FlowSchema objects: %w", err)
 	}
-	return cfgCtlr.digestConfigObjects(newPLs, newFSs, flowSchemaRVs)
+	return cfgCtlr.digestConfigObjects(newPLs, newFSs)
 }
 
+// Invoke only in the one and only goroutine running syncOnce.
 func (cfgCtlr *configController) isNews(newPLs []*flowcontrol.PriorityLevelConfiguration, newFSs []*flowcontrol.FlowSchema) bool {
 	if len(newPLs) != len(cfgCtlr.priorityLevelGenerations) {
 		return true
@@ -451,9 +459,13 @@ func (cfgCtlr *configController) isNews(newPLs []*flowcontrol.PriorityLevelConfi
 		return true
 	}
 	for _, fs := range newFSs {
-		// Note that pl.Generation >= 1, so the following test will
+		// Note that fs.Generation >= 1, so the following test will
 		// succeed if the UID is not in the flowSchemaGenerations map
 		if fs.Generation != cfgCtlr.flowSchemaGenerations[fs.UID] {
+			return true
+		}
+		prevFS := cfgCtlr.flowSchemasByName[fs.Name]
+		if prevFS == nil || !apiequality.Semantic.DeepEqual(prevFS.Status, fs.Status) {
 			return true
 		}
 	}
@@ -502,19 +514,21 @@ type fsStatusUpdate struct {
 // digestConfigObjects is given all the API objects that configure
 // cfgCtlr and writes its consequent new configState.
 // Only invoke this in the one and only worker goroutine
-func (cfgCtlr *configController) digestConfigObjects(newPLs []*flowcontrol.PriorityLevelConfiguration, newFSs []*flowcontrol.FlowSchema, flowSchemaRVs map[string]string) (time.Duration, error) {
+func (cfgCtlr *configController) digestConfigObjects(newPLs []*flowcontrol.PriorityLevelConfiguration, newFSs []*flowcontrol.FlowSchema) (time.Duration, error) {
 	var suggestedDelay time.Duration
 	var errs []error
 	if cfgCtlr.isNews(newPLs, newFSs) {
 		var fsStatusUpdates []fsStatusUpdate
 		fsStatusUpdates, cfgCtlr.plConcurrencyLimits = cfgCtlr.lockAndDigestConfigObjects(newPLs, newFSs)
-		suggestedDelay, errs = cfgCtlr.doFSStatusUpdates(fsStatusUpdates, flowSchemaRVs)
+		suggestedDelay, errs = cfgCtlr.doFSStatusUpdates(fsStatusUpdates)
+	} else {
+		klog.V(6).Infof("%s found no news", cfgCtlr.name)
 	}
 	errs = append(errs, cfgCtlr.doPLCStatusUpdates(newPLs, cfgCtlr.plConcurrencyLimits)...)
 	return suggestedDelay, utilerrors.NewAggregate(errs)
 }
 
-func (cfgCtlr *configController) doFSStatusUpdates(fsStatusUpdates []fsStatusUpdate, flowSchemaRVs map[string]string) (time.Duration, []error) {
+func (cfgCtlr *configController) doFSStatusUpdates(fsStatusUpdates []fsStatusUpdate) (time.Duration, []error) {
 	var errs []error
 	currResult := updateAttempt{
 		timeUpdated:  cfgCtlr.clock.Now(),
@@ -542,10 +556,8 @@ func (cfgCtlr *configController) doFSStatusUpdates(fsStatusUpdates []fsStatusUpd
 		fsIfc := cfgCtlr.flowcontrolClient.FlowSchemas()
 		patchBytes := []byte(fmt.Sprintf(`{"status": {"conditions": [ %s ] } }`, string(enc)))
 		patchOptions := metav1.PatchOptions{FieldManager: cfgCtlr.asFieldManager}
-		patchedFlowSchema, err := fsIfc.Patch(context.TODO(), fsu.flowSchema.Name, apitypes.StrategicMergePatchType, patchBytes, patchOptions, "status")
+		_, err = fsIfc.Patch(context.TODO(), fsu.flowSchema.Name, apitypes.StrategicMergePatchType, patchBytes, patchOptions, "status")
 		if err == nil {
-			key, _ := cache.MetaNamespaceKeyFunc(patchedFlowSchema)
-			flowSchemaRVs[key] = patchedFlowSchema.ResourceVersion
 		} else if apierrors.IsNotFound(err) {
 			// This object has been deleted.  A notification is coming
 			// and nothing more needs to be done here.
@@ -732,11 +744,14 @@ func (meal *cfgMeal) digestFlowSchemasLocked(newFSs []*flowcontrol.FlowSchema) {
 	}
 
 	meal.cfgCtlr.flowSchemas = fsSeq
-	if klog.V(5).Enabled() {
-		for _, fs := range fsSeq {
-			klog.Infof("Using FlowSchema %s", fcfmt.Fmt(fs))
+	nameToFS := make(map[string]*flowcontrol.FlowSchema)
+	for _, fs := range fsSeq {
+		nameToFS[fs.Name] = fs
+		if klog.V(5).Enabled() {
+			klog.Infof("%s Using FlowSchema %s", meal.cfgCtlr.name, fcfmt.Fmt(fs))
 		}
 	}
+	meal.cfgCtlr.flowSchemasByName = nameToFS
 }
 
 // Consider all the priority levels in the previous configuration.
