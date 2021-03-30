@@ -306,10 +306,12 @@ type NonResourcePolicyRule struct {
 // FlowSchemaStatus represents the current state of a FlowSchema.
 type FlowSchemaStatus struct {
 	// `conditions` is a list of the current states of FlowSchema.
+	// +patchMergeKey=type
+	// +patchStrategy=merge
 	// +listType=map
 	// +listMapKey=type
 	// +optional
-	Conditions []FlowSchemaCondition `json:"conditions,omitempty" protobuf:"bytes,1,rep,name=conditions"`
+	Conditions []FlowSchemaCondition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
 // FlowSchemaCondition describes conditions for a FlowSchema.
@@ -504,17 +506,21 @@ type PriorityLevelConfigurationConditionType string
 // PriorityLevelConfigurationStatus represents the current state of a "request-priority".
 type PriorityLevelConfigurationStatus struct {
 	// `conditions` is the current state of "request-priority".
+	// +patchMergeKey=type
+	// +patchStrategy=merge
 	// +listType=map
 	// +listMapKey=type
 	// +optional
-	Conditions []PriorityLevelConfigurationCondition `json:"conditions,omitempty" protobuf:"bytes,1,rep,name=conditions"`
+	Conditions []PriorityLevelConfigurationCondition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 
 	// `concurrencyLimits` indicates the concurrency limit that each
 	// apiserver is enforcing for this priority level.
+	// +patchMergeKey=apiServer
+	// +patchStrategy=merge
 	// +listType=map
 	// +listMapKey=apiServer
 	// +optional
-	ConcurrencyLimits []ConcurrencyLimitStatus `json:"concurrencyLimits,omitempty" protobuf:"bytes,2,rep,name=concurrencyLimits"`
+	ConcurrencyLimits []ConcurrencyLimitStatus `json:"concurrencyLimits,omitempty" patchStrategy:"merge" patchMergeKey:"apiServer" protobuf:"bytes,2,rep,name=concurrencyLimits"`
 }
 
 // PriorityLevelConfigurationCondition defines the condition of priority level.

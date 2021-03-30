@@ -445,6 +445,9 @@ func (cfgCtlr *configController) syncOne() (specificDelay time.Duration, err err
 	return cfgCtlr.digestConfigObjects(newPLs, newFSs)
 }
 
+// Determines whether the full digestion procedure is needed;
+// the alternative is to just update the PriorityLevelConfigurationStatus
+// subobjects as needed to report the concurrency limits already computed.
 // Invoke only in the one and only goroutine running syncOnce.
 func (cfgCtlr *configController) needsLockedWork(newPLs []*flowcontrol.PriorityLevelConfiguration, newFSs []*flowcontrol.FlowSchema) bool {
 	if len(newPLs) != len(cfgCtlr.priorityLevelGenerations) {
@@ -526,7 +529,7 @@ func (cfgCtlr *configController) digestConfigObjects(newPLs []*flowcontrol.Prior
 		fsStatusUpdates, cfgCtlr.plConcurrencyLimits = cfgCtlr.lockAndDigestConfigObjects(newPLs, newFSs)
 		suggestedDelay, errs = cfgCtlr.doFSStatusUpdates(fsStatusUpdates)
 	} else {
-		klog.V(6).Infof("%s found no news", cfgCtlr.name)
+		klog.V(6).Infof("%s took early out", cfgCtlr.name)
 	}
 	errs = append(errs, cfgCtlr.doPLCStatusUpdates(newPLs, cfgCtlr.plConcurrencyLimits)...)
 	return suggestedDelay, utilerrors.NewAggregate(errs)
