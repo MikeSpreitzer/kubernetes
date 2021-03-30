@@ -139,10 +139,13 @@ type configController struct {
 	// is mutable; every slice stored in it is deeply immutable.
 	flowSchemas apihelpers.FlowSchemaSequence
 
-	// Maps flow schema name to object.  This field is only accessed
-	// by digestConfigObjects, all of whose invocations are totally
-	// ordered.  This field is used to avoid repeating identical work.
-	flowSchemasByName map[string]*flowcontrol.FlowSchema
+	// Maps flow schema name to the ConditionStatus this
+	// controller wants to see in the dangling condition.  A
+	// missing entry means it has not been determined yet.  This
+	// field is only accessed by the one and only worker
+	// goroutine, all of whose invocations are totally ordered.
+	// This field is used to avoid repeating identical work.
+	fsProperDanglingStatus map[string]flowcontrol.ConditionStatus
 
 	// priorityLevelStates maps the PriorityLevelConfiguration object
 	// name to the state for that level.  Every name referenced from a
@@ -222,7 +225,7 @@ func newTestableController(config TestableConfig) *configController {
 		requestWaitLimit:       config.RequestWaitLimit,
 		flowcontrolClient:      config.FlowcontrolClient,
 		id:                     makeID(config.IDHint),
-		flowSchemasByName:      make(map[string]*flowcontrol.FlowSchema),
+		fsProperDanglingStatus: make(map[string]flowcontrol.ConditionStatus),
 		priorityLevelStates:    make(map[string]*priorityLevelState),
 	}
 	klog.V(2).Infof("NewTestableController %q with serverConcurrencyLimit=%d, requestWaitLimit=%s, name=%s, asFieldManager=%q", cfgCtlr.id, cfgCtlr.serverConcurrencyLimit, cfgCtlr.requestWaitLimit, cfgCtlr.name, cfgCtlr.asFieldManager)
@@ -443,7 +446,7 @@ func (cfgCtlr *configController) syncOne() (specificDelay time.Duration, err err
 }
 
 // Invoke only in the one and only goroutine running syncOnce.
-func (cfgCtlr *configController) isNews(newPLs []*flowcontrol.PriorityLevelConfiguration, newFSs []*flowcontrol.FlowSchema) bool {
+func (cfgCtlr *configController) needsLockedWork(newPLs []*flowcontrol.PriorityLevelConfiguration, newFSs []*flowcontrol.FlowSchema) bool {
 	if len(newPLs) != len(cfgCtlr.priorityLevelGenerations) {
 		return true
 	}
@@ -464,8 +467,9 @@ func (cfgCtlr *configController) isNews(newPLs []*flowcontrol.PriorityLevelConfi
 		if fs.Generation != cfgCtlr.flowSchemaGenerations[fs.UID] {
 			return true
 		}
-		prevFS := cfgCtlr.flowSchemasByName[fs.Name]
-		if prevFS == nil || !apiequality.Semantic.DeepEqual(prevFS.Status, fs.Status) {
+		curCond := apihelpers.GetFlowSchemaConditionByType(fs, flowcontrol.FlowSchemaConditionDangling)
+		properStatus, haveProper := cfgCtlr.fsProperDanglingStatus[fs.Name]
+		if curCond == nil || !haveProper || curCond.Status != properStatus {
 			return true
 		}
 	}
@@ -517,7 +521,7 @@ type fsStatusUpdate struct {
 func (cfgCtlr *configController) digestConfigObjects(newPLs []*flowcontrol.PriorityLevelConfiguration, newFSs []*flowcontrol.FlowSchema) (time.Duration, error) {
 	var suggestedDelay time.Duration
 	var errs []error
-	if cfgCtlr.isNews(newPLs, newFSs) {
+	if cfgCtlr.needsLockedWork(newPLs, newFSs) {
 		var fsStatusUpdates []fsStatusUpdate
 		fsStatusUpdates, cfgCtlr.plConcurrencyLimits = cfgCtlr.lockAndDigestConfigObjects(newPLs, newFSs)
 		suggestedDelay, errs = cfgCtlr.doFSStatusUpdates(fsStatusUpdates)
@@ -723,6 +727,7 @@ func (meal *cfgMeal) digestFlowSchemasLocked(newFSs []*flowcontrol.FlowSchema) {
 	fsSeq := make(apihelpers.FlowSchemaSequence, 0, len(newFSs))
 	fsMap := make(map[string]*flowcontrol.FlowSchema, len(newFSs))
 	var haveExemptFS, haveCatchAllFS bool
+	newProperDanglingStatus := make(map[string]flowcontrol.ConditionStatus)
 	for i, fs := range newFSs {
 		meal.cfgCtlr.flowSchemaGenerations[fs.UID] = fs.Generation
 		otherFS := fsMap[fs.Name]
@@ -738,7 +743,7 @@ func (meal *cfgMeal) digestFlowSchemasLocked(newFSs []*flowcontrol.FlowSchema) {
 		//
 		// TODO: consider not even trying if server is not handling
 		// requests yet.
-		meal.presyncFlowSchemaStatus(fs, meal.cfgCtlr.foundToDangling(goodPriorityRef), fs.Spec.PriorityLevelConfiguration.Name)
+		newProperDanglingStatus[fs.Name] = meal.presyncFlowSchemaStatus(fs, meal.cfgCtlr.foundToDangling(goodPriorityRef), fs.Spec.PriorityLevelConfiguration.Name)
 
 		if !goodPriorityRef {
 			klog.V(6).Infof("Ignoring FlowSchema %s because of bad priority level reference %q", fs.Name, fs.Spec.PriorityLevelConfiguration.Name)
@@ -760,14 +765,12 @@ func (meal *cfgMeal) digestFlowSchemasLocked(newFSs []*flowcontrol.FlowSchema) {
 	}
 
 	meal.cfgCtlr.flowSchemas = fsSeq
-	nameToFS := make(map[string]*flowcontrol.FlowSchema)
-	for _, fs := range fsSeq {
-		nameToFS[fs.Name] = fs
-		if klog.V(5).Enabled() {
+	meal.cfgCtlr.fsProperDanglingStatus = newProperDanglingStatus
+	if klog.V(5).Enabled() {
+		for _, fs := range fsSeq {
 			klog.Infof("%s Using FlowSchema %s", meal.cfgCtlr.name, fcfmt.Fmt(fs))
 		}
 	}
-	meal.cfgCtlr.flowSchemasByName = nameToFS
 }
 
 // Consider all the priority levels in the previous configuration.
@@ -888,7 +891,7 @@ func queueSetCompleterForPL(qsf fq.QueueSetFactory, queues fq.QueueSet, pl *flow
 	return qsc, err
 }
 
-func (meal *cfgMeal) presyncFlowSchemaStatus(fs *flowcontrol.FlowSchema, isDangling bool, plName string) {
+func (meal *cfgMeal) presyncFlowSchemaStatus(fs *flowcontrol.FlowSchema, isDangling bool, plName string) flowcontrol.ConditionStatus {
 	danglingCondition := apihelpers.GetFlowSchemaConditionByType(fs, flowcontrol.FlowSchemaConditionDangling)
 	if danglingCondition == nil {
 		danglingCondition = &flowcontrol.FlowSchemaCondition{
@@ -906,7 +909,7 @@ func (meal *cfgMeal) presyncFlowSchemaStatus(fs *flowcontrol.FlowSchema, isDangl
 		desiredMessage = fmt.Sprintf("This FlowSchema references the PriorityLevelConfiguration object named %q and it exists", plName)
 	}
 	if danglingCondition.Status == desiredStatus && danglingCondition.Reason == desiredReason && danglingCondition.Message == desiredMessage {
-		return
+		return desiredStatus
 	}
 	now := meal.cfgCtlr.clock.Now()
 	meal.fsStatusUpdates = append(meal.fsStatusUpdates, fsStatusUpdate{
@@ -919,6 +922,7 @@ func (meal *cfgMeal) presyncFlowSchemaStatus(fs *flowcontrol.FlowSchema, isDangl
 			Message:            desiredMessage,
 		},
 		oldValue: *danglingCondition})
+	return desiredStatus
 }
 
 // imaginePL adds a priority level based on one of the mandatory ones
