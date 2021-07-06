@@ -112,6 +112,7 @@ func (s *store) Versioner() storage.Versioner {
 
 // Get implements storage.Interface.Get.
 func (s *store) Get(ctx context.Context, key string, opts storage.GetOptions, out runtime.Object) error {
+	klog.V(5).InfoS("Get", "ctx", ctx, "key", key)
 	key = path.Join(s.pathPrefix, key)
 	startTime := time.Now()
 	getResp, err := s.client.KV.Get(ctx, key)
