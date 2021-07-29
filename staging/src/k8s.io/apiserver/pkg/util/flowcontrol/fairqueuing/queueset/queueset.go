@@ -299,7 +299,7 @@ func (qs *queueSet) StartRequest(ctx context.Context, width *fqrequest.Width, ha
 		go func() {
 			defer runtime.HandleCrash()
 			qs.goroutineDoneOrBlocked()
-			_ = <-doneCh
+			<-doneCh
 			// Whatever goroutine unblocked the preceding receive MUST
 			// have already either (a) incremented qs.counter or (b)
 			// known that said counter is not actually counting or (c)
