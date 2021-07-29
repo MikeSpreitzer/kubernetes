@@ -23,8 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apiserver/pkg/util/flowcontrol/counter"
 	"k8s.io/apiserver/pkg/util/flowcontrol/debug"
 	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
 	fairqueuingclock "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/clock"
@@ -46,9 +44,17 @@ const nsTimeFmt = "2006-01-02 15:04:05.000000000"
 // queueSetFactory implements the QueueSetFactory interface
 // queueSetFactory makes QueueSet objects.
 type queueSetFactory struct {
-	counter counter.GoRoutineCounter
-	clock   fairqueuingclock.EventClock
+	clock                 fairqueuingclock.EventClock
+	promiseFactoryFactory promiseFactoryFactory
 }
+
+// promiseFactory returns a WriteOnce
+// - whose Set method is invoked with the queueSet locked, and
+// - whose Get method is invoked with the queueSet not locked.
+type promiseFactory func(initial interface{}, doneCh <-chan struct{}, doneVal interface{}) promise.WriteOnce
+
+// promiseFactoryFactory returns the promiseFactory to use for the given queueSet
+type promiseFactoryFactory func(*queueSet) promiseFactory
 
 // `*queueSetCompleter` implements QueueSetCompleter.  Exactly one of
 // the fields `factory` and `theSet` is non-nil.
@@ -62,8 +68,8 @@ type queueSetCompleter struct {
 
 // queueSet implements the Fair Queuing for Server Requests technique
 // described in this package's doc, and a pointer to one implements
-// the QueueSet interface.  The clock, GoRoutineCounter, and estimated
-// service time should not be changed; the fields listed after the
+// the QueueSet interface.  The fields listed before the lock
+// should not be changed; the fields listed after the
 // lock must be accessed only while holding the lock.  The methods of
 // this type follow the naming convention that the suffix "Locked"
 // means the caller must hold the lock; for a method whose name does
@@ -71,9 +77,10 @@ type queueSetCompleter struct {
 // locking.
 type queueSet struct {
 	clock                fairqueuingclock.EventClock
-	counter              counter.GoRoutineCounter
 	estimatedServiceTime float64
 	obsPair              metrics.TimedObserverPair
+
+	promiseFactory promiseFactory
 
 	lock sync.Mutex
 
@@ -120,10 +127,15 @@ type queueSet struct {
 }
 
 // NewQueueSetFactory creates a new QueueSetFactory object
-func NewQueueSetFactory(c fairqueuingclock.EventClock, counter counter.GoRoutineCounter) fq.QueueSetFactory {
+func NewQueueSetFactory(c fairqueuingclock.EventClock) fq.QueueSetFactory {
+	return newTestableQueueSetFactory(c, ordinaryPromiseFactoryFactory)
+}
+
+// newTestableQueueSetFactory creates a new QueueSetFactory object with the given connector between context cancel and wait cancel
+func newTestableQueueSetFactory(c fairqueuingclock.EventClock, promiseFactoryFactory promiseFactoryFactory) fq.QueueSetFactory {
 	return &queueSetFactory{
-		counter: counter,
-		clock:   c,
+		clock:                 c,
+		promiseFactoryFactory: promiseFactoryFactory,
 	}
 }
 
@@ -158,13 +170,13 @@ func (qsc *queueSetCompleter) Complete(dCfg fq.DispatchingConfig) fq.QueueSet {
 	if qs == nil {
 		qs = &queueSet{
 			clock:                qsc.factory.clock,
-			counter:              qsc.factory.counter,
 			estimatedServiceTime: 60,
 			obsPair:              qsc.obsPair,
 			qCfg:                 qsc.qCfg,
 			virtualTime:          0,
 			lastRealTime:         qsc.factory.clock.Now(),
 		}
+		qs.promiseFactory = qsc.factory.promiseFactoryFactory(qs)
 	}
 	qs.setConfiguration(qsc.qCfg, qsc.dealer, dCfg)
 	return qs
@@ -241,6 +253,8 @@ const (
 // executing at each point where there is a change in that quantity,
 // because the metrics --- and only the metrics --- track that
 // quantity per FlowSchema.
+// The queueSet's promiseFactory is invoked once if the returns Request is non-nil,
+// not invoked if the Request is nil.
 func (qs *queueSet) StartRequest(ctx context.Context, workEstimate *fqrequest.WorkEstimate, hashValue uint64, flowDistinguisher, fsName string, descr1, descr2 interface{}, queueNoteFn fq.QueueNoteFn) (fq.Request, bool) {
 	qs.lockAndSyncTime()
 	defer qs.lock.Unlock()
@@ -287,37 +301,13 @@ func (qs *queueSet) StartRequest(ctx context.Context, workEstimate *fqrequest.Wo
 	// request from that queue.
 	qs.dispatchAsMuchAsPossibleLocked()
 
-	// ========================================================================
-	// Step 3:
-
-	// Set up a relay from the context's Done channel to the world
-	// of well-counted goroutines. We Are Told that every
-	// request's context's Done channel gets closed by the time
-	// the request is done being processed.
-	doneCh := ctx.Done()
-
-	// Retrieve the queueset configuration name while we have the lock
-	// and use it in the goroutine below.
-	configName := qs.qCfg.Name
-
-	if doneCh != nil {
-		qs.preCreateOrUnblockGoroutine()
-		go func() {
-			defer runtime.HandleCrash()
-			qs.goroutineDoneOrBlocked()
-			<-doneCh
-			// Whatever goroutine unblocked the preceding receive MUST
-			// have already either (a) incremented qs.counter or (b)
-			// known that said counter is not actually counting or (c)
-			// known that the count does not need to be accurate.
-			// BTW, the count only needs to be accurate in a test that
-			// uses FakeEventClock::Run().
-			klog.V(6).Infof("QS(%s): Context of request %q %#+v %#+v is Done", configName, fsName, descr1, descr2)
-			qs.cancelWait(req)
-			qs.goroutineDoneOrBlocked()
-		}()
-	}
 	return req, false
+}
+
+// This is the promiseFactoryFactory that a queueSetFactory would
+// ordinarily use.  Test code might use something different.
+func ordinaryPromiseFactoryFactory(qs *queueSet) promiseFactory {
+	return promise.NewWriteOnce
 }
 
 // Seats returns the number of seats this request requires.
@@ -349,7 +339,13 @@ func (req *request) Finish(execFn func()) bool {
 
 func (req *request) wait() (bool, bool) {
 	qs := req.qs
-	qs.lock.Lock()
+
+	// ========================================================================
+	// Step 3:
+	// The final step is to wait on a decision from
+	// somewhere and then act on it.
+	decisionAny := req.decision.Get()
+	qs.lockAndSyncTime()
 	defer qs.lock.Unlock()
 	if req.waitStarted {
 		// This can not happen, because the client is forbidden to
@@ -357,13 +353,6 @@ func (req *request) wait() (bool, bool) {
 		panic(fmt.Sprintf("Multiple calls to the Wait method, QueueSet=%s, startTime=%s, descr1=%#+v, descr2=%#+v", req.qs.qCfg.Name, req.startTime, req.descr1, req.descr2))
 	}
 	req.waitStarted = true
-
-	// ========================================================================
-	// Step 4:
-	// The final step is to wait on a decision from
-	// somewhere and then act on it.
-	decisionAny := req.decision.Get()
-	qs.syncTimeLocked()
 	decision, isDecision := decisionAny.(requestDecision)
 	if !isDecision {
 		panic(fmt.Sprintf("QS(%s): Impossible decision %#+v (of type %T) for request %#+v %#+v", qs.qCfg.Name, decisionAny, decisionAny, req.descr1, req.descr2))
@@ -376,6 +365,12 @@ func (req *request) wait() (bool, bool) {
 	case decisionCancel:
 		// TODO(aaron-prindle) add metrics for this case
 		klog.V(5).Infof("QS(%s): Ejecting request %#+v %#+v from its queue", qs.qCfg.Name, req.descr1, req.descr2)
+		// remove the request from the queue as it has timed out
+		req.removeFromQueueFn()
+		qs.totRequestsWaiting--
+		metrics.AddRequestsInQueues(req.ctx, qs.qCfg.Name, req.fsName, -1)
+		req.NoteQueued(false)
+		qs.obsPair.RequestsWaiting.Add(-1)
 		return false, qs.isIdleLocked()
 	case decisionExecute:
 		klog.V(5).Infof("QS(%s): Dispatching request %#+v %#+v from its queue", qs.qCfg.Name, req.descr1, req.descr2)
@@ -459,7 +454,7 @@ func (qs *queueSet) timeoutOldRequestsAndRejectOrEnqueueLocked(ctx context.Conte
 		fsName:            fsName,
 		flowDistinguisher: flowDistinguisher,
 		ctx:               ctx,
-		decision:          promise.NewWriteOnce(&qs.lock, qs.counter),
+		decision:          qs.promiseFactory(nil, ctx.Done(), decisionCancel),
 		arrivalTime:       qs.clock.Now(),
 		queue:             queue,
 		descr1:            descr1,
@@ -594,13 +589,12 @@ func (qs *queueSet) dispatchSansQueueLocked(ctx context.Context, workEstimate *f
 		flowDistinguisher: flowDistinguisher,
 		ctx:               ctx,
 		startTime:         now,
-		decision:          promise.NewWriteOnce(&qs.lock, qs.counter),
+		decision:          qs.promiseFactory(decisionExecute, ctx.Done(), decisionCancel),
 		arrivalTime:       now,
 		descr1:            descr1,
 		descr2:            descr2,
 		workEstimate:      *workEstimate,
 	}
-	req.decision.Set(decisionExecute)
 	qs.totRequestsExecuting++
 	qs.totSeatsInUse += req.Seats()
 	metrics.AddRequestsExecuting(ctx, qs.qCfg.Name, fsName, 1)
@@ -651,26 +645,6 @@ func (qs *queueSet) dispatchLocked() bool {
 	queue.virtualStart += qs.estimatedServiceTime * float64(request.Seats())
 	request.decision.Set(decisionExecute)
 	return ok
-}
-
-// cancelWait ensures the request is not waiting.  This is only
-// applicable to a request that has been assigned to a queue.
-func (qs *queueSet) cancelWait(req *request) {
-	qs.lock.Lock()
-	defer qs.lock.Unlock()
-	if req.decision.IsSet() {
-		// The request has already been removed from the queue
-		// and so we consider its wait to be over.
-		return
-	}
-	req.decision.Set(decisionCancel)
-
-	// remove the request from the queue as it has timed out
-	req.removeFromQueueFn()
-	qs.totRequestsWaiting--
-	metrics.AddRequestsInQueues(req.ctx, qs.qCfg.Name, req.fsName, -1)
-	req.NoteQueued(false)
-	qs.obsPair.RequestsWaiting.Add(-1)
 }
 
 // canAccommodateSeatsLocked returns true if this queueSet has enough
@@ -855,21 +829,6 @@ func removeQueueAndUpdateIndexes(queues []*queue, index int) []*queue {
 		keptQueues[i].index--
 	}
 	return keptQueues
-}
-
-// preCreateOrUnblockGoroutine needs to be called before creating a
-// goroutine associated with this queueSet or unblocking a blocked
-// one, to properly update the accounting used in testing.
-func (qs *queueSet) preCreateOrUnblockGoroutine() {
-	qs.counter.Add(1)
-}
-
-// goroutineDoneOrBlocked needs to be called at the end of every
-// goroutine associated with this queueSet or when such a goroutine is
-// about to wait on some other goroutine to do something; this is to
-// properly update the accounting used in testing.
-func (qs *queueSet) goroutineDoneOrBlocked() {
-	qs.counter.Add(-1)
 }
 
 func (qs *queueSet) UpdateObservations() {
