@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -30,9 +31,10 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/clock"
-	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apiserver/pkg/util/flowcontrol/counter"
 	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
+	"k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/promise"
+	testpromise "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/promise/testing"
 	test "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/testing"
 	testclock "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/testing/clock"
 	"k8s.io/apiserver/pkg/util/flowcontrol/metrics"
@@ -371,8 +373,9 @@ func ClockWait(clk *testclock.FakeEventClock, counter counter.GoRoutineCounter, 
 	<-dunch
 }
 
-func init() {
+func TestMain(m *testing.M) {
 	klog.InitFlags(nil)
+	os.Exit(m.Run())
 }
 
 // TestNoRestraint tests whether the no-restraint factory gives every client what it asks for
@@ -406,7 +409,7 @@ func TestUniformFlowsHandSize1(t *testing.T) {
 	now := time.Now()
 
 	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
-	qsf := NewQueueSetFactory(clk, counter)
+	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "TestUniformFlowsHandSize1",
 		DesiredNumQueues: 9,
@@ -443,7 +446,7 @@ func TestUniformFlowsHandSize3(t *testing.T) {
 	now := time.Now()
 
 	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
-	qsf := NewQueueSetFactory(clk, counter)
+	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "TestUniformFlowsHandSize3",
 		DesiredNumQueues: 8,
@@ -479,7 +482,7 @@ func TestDifferentFlowsExpectEqual(t *testing.T) {
 	now := time.Now()
 
 	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
-	qsf := NewQueueSetFactory(clk, counter)
+	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "DiffFlowsExpectEqual",
 		DesiredNumQueues: 9,
@@ -516,7 +519,7 @@ func TestDifferentFlowsExpectUnequal(t *testing.T) {
 	now := time.Now()
 
 	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
-	qsf := NewQueueSetFactory(clk, counter)
+	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "DiffFlowsExpectUnequal",
 		DesiredNumQueues: 9,
@@ -553,7 +556,7 @@ func TestWindup(t *testing.T) {
 	now := time.Now()
 
 	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
-	qsf := NewQueueSetFactory(clk, counter)
+	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "TestWindup",
 		DesiredNumQueues: 9,
@@ -589,7 +592,7 @@ func TestDifferentFlowsWithoutQueuing(t *testing.T) {
 	now := time.Now()
 
 	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
-	qsf := NewQueueSetFactory(clk, counter)
+	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "TestDifferentFlowsWithoutQueuing",
 		DesiredNumQueues: 0,
@@ -622,7 +625,7 @@ func TestTimeout(t *testing.T) {
 	now := time.Now()
 
 	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
-	qsf := NewQueueSetFactory(clk, counter)
+	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "TestTimeout",
 		DesiredNumQueues: 128,
@@ -673,7 +676,7 @@ func TestContextCancel(t *testing.T) {
 	metrics.Reset()
 	now := time.Now()
 	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
-	qsf := newTestableQueueSetFactory(clk, counter, testableCancelWhenDone)
+	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "TestContextCancel",
 		DesiredNumQueues: 11,
@@ -771,19 +774,12 @@ func TestContextCancel(t *testing.T) {
 	}
 }
 
-// testableCancelWhenDone counts goroutine activity so it can be used with FakeEventClock
-func testableCancelWhenDone(qs *queueSet, configName string, req *request, fsName string, descr1, descr2 interface{}, doneCh <-chan struct{}) {
-	qs.counter.Add(1)
-	go func() {
-		defer runtime.HandleCrash()
-		qs.counter.Add(-1)
-		<-doneCh
-		// Whatever goroutine unblocked the preceding receive MUST
-		// have already accounted for this activation.
-		klog.V(6).Infof("QS(%s): Context of request %q %#+v %#+v is Done", qs.qCfg.Name, fsName, descr1, descr2)
-		qs.cancelWait(req)
-		qs.counter.Add(-1)
-	}()
+func countingPromiseMakerMaker(activeCounter counter.GoRoutineCounter) queueSetPromiseMakerMaker {
+	return func(qs *queueSet) queueSetPromiseMaker {
+		return func(initial interface{}, doneCh <-chan struct{}, doneVal interface{}) promise.WriteOnce {
+			return testpromise.NewCountingWriteOnce(activeCounter, &qs.lock, initial, doneCh, doneVal)
+		}
+	}
 }
 
 func TestTotalRequestsExecutingWithPanic(t *testing.T) {
@@ -791,7 +787,7 @@ func TestTotalRequestsExecutingWithPanic(t *testing.T) {
 	metrics.Reset()
 	now := time.Now()
 	clk, counter := testclock.NewFakeEventClock(now, 0, nil)
-	qsf := NewQueueSetFactory(clk, counter)
+	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "TestTotalRequestsExecutingWithPanic",
 		DesiredNumQueues: 0,
