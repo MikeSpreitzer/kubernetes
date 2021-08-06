@@ -18,32 +18,51 @@ package promise
 
 import (
 	"context"
+	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
+	testclock "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/clock/testing"
+	"k8s.io/klog/v2"
 )
 
-func TestWriteOnceSet(t *testing.T) {
+func TestMain(m *testing.M) {
+	klog.InitFlags(nil)
+	os.Exit(m.Run())
+}
+
+func TestCountingWriteOnceSet(t *testing.T) {
 	oldTime := time.Now()
 	cval := &oldTime
-	ctx, cancel := context.WithCancel(context.Background())
-	wr := NewWriteOnce(nil, ctx.Done(), cval)
-	gots := make(chan interface{})
+	doneCh := make(chan struct{})
+	now := time.Now()
+	clock, counter := testclock.NewFakeEventClock(now, 0, nil)
+	var lock sync.Mutex
+	wr := NewCountingWriteOnce(counter, &lock, nil, doneCh, cval)
+	gots := make(chan interface{}, 1)
+	counter.Add(1)
 	go func() {
 		gots <- wr.Get()
+		counter.Add(-1)
 	}()
+	clock.Run(nil)
 	select {
 	case <-gots:
 		t.Error("Get returned before Set")
 	case <-time.After(5 * time.Second):
 		t.Log("Good: Get did not return yet")
 	}
-	now := time.Now()
 	aval := &now
-	if !wr.Set(aval) {
-		t.Error("Set() returned false")
-	}
+	func() {
+		lock.Lock()
+		defer lock.Unlock()
+		if !wr.Set(aval) {
+			t.Error("Set() returned false")
+		}
+	}()
+	clock.Run(nil)
 	select {
 	case gotVal := <-gots:
 		t.Logf("Got %#+v", gotVal)
@@ -53,9 +72,12 @@ func TestWriteOnceSet(t *testing.T) {
 	case <-time.After(wait.ForeverTestTimeout):
 		t.Error("Get did not return after Set")
 	}
+	counter.Add(1)
 	go func() {
 		gots <- wr.Get()
+		counter.Add(-1)
 	}()
+	clock.Run(nil)
 	select {
 	case gotVal := <-gots:
 		t.Logf("Got %#+v", gotVal)
@@ -67,45 +89,47 @@ func TestWriteOnceSet(t *testing.T) {
 	}
 	later := time.Now()
 	bval := &later
-	if wr.Set(bval) {
-		t.Error("second Set() returned true")
-	}
+	func() {
+		lock.Lock()
+		defer lock.Unlock()
+		if wr.Set(bval) {
+			t.Error("second Set() returned true")
+		}
+	}()
 	if wr.Get() != aval {
 		t.Error("Get() after second Set returned wrong value")
 	}
-	cancel()
+	counter.Add(1)
+	close(doneCh)
 	time.Sleep(5 * time.Second) // give it a chance to misbehave
-	go func() {
-		gots <- wr.Get()
-	}()
-	select {
-	case gotVal := <-gots:
-		t.Logf("Got %#+v", gotVal)
-		if gotVal != aval {
-			t.Error("Get after cancel did not return what was Set")
-		}
-	case <-time.After(wait.ForeverTestTimeout):
-		t.Error("Get after cancel did not return")
+	if wr.Get() != aval {
+		t.Error("Get() after cancel returned wrong value")
 	}
 	close(gots)
 }
-
-func TestWriteOnceCancel(t *testing.T) {
+func TestCountingWriteOnceCancel(t *testing.T) {
 	oldTime := time.Now()
 	cval := &oldTime
+	clock, counter := testclock.NewFakeEventClock(oldTime, 0, nil)
 	ctx, cancel := context.WithCancel(context.Background())
-	wr := NewWriteOnce(nil, ctx.Done(), cval)
-	gots := make(chan interface{})
+	var lock sync.Mutex
+	wr := NewCountingWriteOnce(counter, &lock, nil, ctx.Done(), cval)
+	gots := make(chan interface{}, 1)
+	counter.Add(1)
 	go func() {
 		gots <- wr.Get()
+		counter.Add(-1)
 	}()
+	clock.Run(nil)
 	select {
 	case <-gots:
 		t.Error("Get returned before Set")
 	case <-time.After(5 * time.Second):
 		t.Log("Good: Get did not return yet")
 	}
+	counter.Add(1) // account for unblocking the receive
 	cancel()
+	clock.Run(nil)
 	select {
 	case gotVal := <-gots:
 		t.Logf("Got %#+v", gotVal)
@@ -115,9 +139,12 @@ func TestWriteOnceCancel(t *testing.T) {
 	case <-time.After(wait.ForeverTestTimeout):
 		t.Error("Get did not return after cancel")
 	}
+	counter.Add(1)
 	go func() {
 		gots <- wr.Get()
+		counter.Add(-1)
 	}()
+	clock.Run(nil)
 	select {
 	case gotVal := <-gots:
 		t.Logf("Got %#+v", gotVal)
@@ -138,15 +165,30 @@ func TestWriteOnceCancel(t *testing.T) {
 	close(gots)
 }
 
-func TestWriteOnceInitial(t *testing.T) {
+func TestCountingWriteOnceInitial(t *testing.T) {
 	oldTime := time.Now()
 	cval := &oldTime
+	clock, counter := testclock.NewFakeEventClock(oldTime, 0, nil)
 	ctx, cancel := context.WithCancel(context.Background())
+	var lock sync.Mutex
 	now := time.Now()
 	aval := &now
-	wr := NewWriteOnce(aval, ctx.Done(), cval)
-	if wr.Get() != aval {
-		t.Error("First Get of initialized promise did not return initial value")
+	wr := NewCountingWriteOnce(counter, &lock, aval, ctx.Done(), cval)
+	gots := make(chan interface{}, 1)
+	counter.Add(1)
+	go func() {
+		gots <- wr.Get()
+		counter.Add(-1)
+	}()
+	clock.Run(nil)
+	select {
+	case gotVal := <-gots:
+		t.Logf("Got %#+v", gotVal)
+		if gotVal != aval {
+			t.Error("Get returned wrong value")
+		}
+	case <-time.After(wait.ForeverTestTimeout):
+		t.Error("Get did not return")
 	}
 	later := time.Now()
 	bval := &later
@@ -156,9 +198,11 @@ func TestWriteOnceInitial(t *testing.T) {
 	if wr.Get() != aval {
 		t.Error("Second Get of initialized promise did not return initial value")
 	}
+	counter.Add(1) // account for unblocking receive
 	cancel()
 	time.Sleep(5 * time.Second) // give it a chance to misbehave
 	if wr.Get() != aval {
 		t.Error("Get of initialized promise after cancel did not return initial value")
 	}
+	close(gots)
 }

@@ -38,12 +38,7 @@ var _ WriteOnce = &promise{}
 // If a `Get` is waiting soon after `doneCh` becomes selectable (which
 // never happens for the nil channel) then `Set(doneVal)` effectively
 // happens at that time.
-//
-// If `doneCh != nil` then `doneVal != nil`.
 func NewWriteOnce(initial interface{}, doneCh <-chan struct{}, doneVal interface{}) WriteOnce {
-	if doneCh != nil && doneVal == nil {
-		panic("NewWriteOnce given nil doneVal")
-	}
 	p := &promise{
 		doneCh:  doneCh,
 		doneVal: doneVal,
@@ -65,9 +60,6 @@ func (p *promise) Get() interface{} {
 }
 
 func (p *promise) Set(value interface{}) bool {
-	if value == nil {
-		panic("promise::Set given nil")
-	}
 	var ans bool
 	p.onceler.Do(func() {
 		p.value = value

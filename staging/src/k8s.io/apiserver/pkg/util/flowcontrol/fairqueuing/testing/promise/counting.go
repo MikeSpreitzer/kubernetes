@@ -14,14 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package testing
+package promise
 
 import (
 	"sync"
 
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apiserver/pkg/util/flowcontrol/counter"
-	"k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/promise"
+	promiseifc "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/promise"
 )
 
 // countingPromise implements the WriteOnce interface.
@@ -39,7 +39,7 @@ type countingPromise struct {
 	value         interface{}
 }
 
-var _ promise.WriteOnce = &countingPromise{}
+var _ promiseifc.WriteOnce = &countingPromise{}
 
 // NewCountingWriteOnce creates a WriteOnce that uses locking and counts goroutine activity.
 //
@@ -47,16 +47,13 @@ var _ promise.WriteOnce = &countingPromise{}
 // - an optional initial value,
 // - an optional "done" channel,
 // - the value that is Set after the "done" channel becomes selectable.
-// Note that for one of these, the `Set(doneVal)` does not wait for a Get.
+// Note that for this implementation, the `Set(doneVal)` does not wait for a Get.
 // If `doneCh != nil` then the caller promises to close it reasonably promptly
 // (to the degree allowed by the Go runtime scheduler), and increment the
 // goroutine counter before that.
 // The WriteOnce's Get method must be called without the lock held.
 // The WriteOnce's Set method must be called with the lock held.
-func NewCountingWriteOnce(activeCounter counter.GoRoutineCounter, lock sync.Locker, initial interface{}, doneCh <-chan struct{}, doneVal interface{}) promise.WriteOnce {
-	if doneCh != nil && doneVal == nil {
-		panic("NewCountingWriteOnce given nil doneVal")
-	}
+func NewCountingWriteOnce(activeCounter counter.GoRoutineCounter, lock sync.Locker, initial interface{}, doneCh <-chan struct{}, doneVal interface{}) promiseifc.WriteOnce {
 	p := &countingPromise{
 		lock:          lock,
 		cond:          *sync.NewCond(lock),

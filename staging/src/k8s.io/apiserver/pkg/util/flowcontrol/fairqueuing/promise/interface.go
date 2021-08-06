@@ -30,6 +30,5 @@ type WriteOnce interface {
 	// returns true.  In the unhappy case that this variable is
 	// already set, this method returns false without modifying the
 	// variable's value.
-	// The given value may not be nil.
 	Set(interface{}) bool
 }

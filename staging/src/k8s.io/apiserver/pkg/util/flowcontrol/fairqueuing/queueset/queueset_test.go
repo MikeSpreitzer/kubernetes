@@ -36,8 +36,8 @@ import (
 	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
 	fqclocktest "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/clock/testing"
 	"k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/promise"
-	testpromise "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/promise/testing"
 	test "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/testing"
+	testpromise "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/testing/promise"
 	"k8s.io/apiserver/pkg/util/flowcontrol/metrics"
 	fcrequest "k8s.io/apiserver/pkg/util/flowcontrol/request"
 	"k8s.io/klog/v2"
@@ -400,7 +400,7 @@ func TestUniformFlowsHandSize1(t *testing.T) {
 	now := time.Now()
 
 	clk, counter := fqclocktest.NewFakeEventClock(now, 0, nil)
-	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
+	qsf := newTestableQueueSetFactory(clk, countingPromiseFactoryFactory(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "TestUniformFlowsHandSize1",
 		DesiredNumQueues: 9,
@@ -437,7 +437,7 @@ func TestUniformFlowsHandSize3(t *testing.T) {
 	now := time.Now()
 
 	clk, counter := fqclocktest.NewFakeEventClock(now, 0, nil)
-	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
+	qsf := newTestableQueueSetFactory(clk, countingPromiseFactoryFactory(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "TestUniformFlowsHandSize3",
 		DesiredNumQueues: 8,
@@ -473,7 +473,7 @@ func TestDifferentFlowsExpectEqual(t *testing.T) {
 	now := time.Now()
 
 	clk, counter := fqclocktest.NewFakeEventClock(now, 0, nil)
-	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
+	qsf := newTestableQueueSetFactory(clk, countingPromiseFactoryFactory(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "DiffFlowsExpectEqual",
 		DesiredNumQueues: 9,
@@ -510,7 +510,7 @@ func TestDifferentFlowsExpectUnequal(t *testing.T) {
 	now := time.Now()
 
 	clk, counter := fqclocktest.NewFakeEventClock(now, 0, nil)
-	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
+	qsf := newTestableQueueSetFactory(clk, countingPromiseFactoryFactory(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "DiffFlowsExpectUnequal",
 		DesiredNumQueues: 9,
@@ -547,7 +547,7 @@ func TestWindup(t *testing.T) {
 	now := time.Now()
 
 	clk, counter := fqclocktest.NewFakeEventClock(now, 0, nil)
-	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
+	qsf := newTestableQueueSetFactory(clk, countingPromiseFactoryFactory(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "TestWindup",
 		DesiredNumQueues: 9,
@@ -583,7 +583,7 @@ func TestDifferentFlowsWithoutQueuing(t *testing.T) {
 	now := time.Now()
 
 	clk, counter := fqclocktest.NewFakeEventClock(now, 0, nil)
-	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
+	qsf := newTestableQueueSetFactory(clk, countingPromiseFactoryFactory(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "TestDifferentFlowsWithoutQueuing",
 		DesiredNumQueues: 0,
@@ -616,7 +616,7 @@ func TestTimeout(t *testing.T) {
 	now := time.Now()
 
 	clk, counter := fqclocktest.NewFakeEventClock(now, 0, nil)
-	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
+	qsf := newTestableQueueSetFactory(clk, countingPromiseFactoryFactory(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "TestTimeout",
 		DesiredNumQueues: 128,
@@ -667,7 +667,7 @@ func TestContextCancel(t *testing.T) {
 	metrics.Reset()
 	now := time.Now()
 	clk, counter := fqclocktest.NewFakeEventClock(now, 0, nil)
-	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
+	qsf := newTestableQueueSetFactory(clk, countingPromiseFactoryFactory(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "TestContextCancel",
 		DesiredNumQueues: 11,
@@ -682,37 +682,34 @@ func TestContextCancel(t *testing.T) {
 	qs := qsc.Complete(fq.DispatchingConfig{ConcurrencyLimit: 1})
 	counter.Add(1) // account for main activity of the goroutine running this test
 	ctx1 := context.Background()
-	b2i := map[bool]int{false: 0, true: 1}
-	var qnc [2][2]int32 // counts of calls to the following queueNoteFns
-	queueNoteFn1 := func(inQueue bool) { atomic.AddInt32(&qnc[0][b2i[inQueue]], 1) }
-	queueNoteFn2 := func(inQueue bool) { atomic.AddInt32(&qnc[1][b2i[inQueue]], 1) }
-	expectQNCounts := func(fn int, expectF, expectT int32) {
-		if a := atomic.LoadInt32(&qnc[fn-1][0]); a != expectF {
-			t.Errorf("Got %d calls to queueNoteFn%d(false), expected %d", a, fn, expectF)
-		}
-		if a := atomic.LoadInt32(&qnc[fn-1][1]); a != expectT {
-			t.Errorf("Got %d calls to queueNoteFn%d(true), expected %d", a, fn, expectT)
-		}
+	pZero := func() *int32 { var zero int32; return &zero }
+	// counts of calls to the QueueNoteFns
+	queueNoteCounts := map[int]map[bool]*int32{
+		1: map[bool]*int32{false: pZero(), true: pZero()},
+		2: map[bool]*int32{false: pZero(), true: pZero()},
 	}
-	req1, _ := qs.StartRequest(ctx1, &fcrequest.WorkEstimate{Seats: 1}, 1, "", "fs1", "test", "one", queueNoteFn1)
-	if req1 == nil {
-		t.Error("Request rejected")
-		return
+	queueNoteFn := func(fn int) func(inQueue bool) {
+		return func(inQueue bool) { atomic.AddInt32(queueNoteCounts[fn][inQueue], 1) }
 	}
-	expectQNCounts(1, 1, 1)
 	fatalErrs := []string{}
 	var errsLock sync.Mutex
 	expectQNCount := func(fn int, inQueue bool, expect int32) {
-		if a := atomic.LoadInt32(&qnc[fn-1][b2i[inQueue]]); a != expect {
+		if a := atomic.LoadInt32(queueNoteCounts[fn][inQueue]); a != expect {
 			errsLock.Lock()
 			defer errsLock.Unlock()
 			fatalErrs = append(fatalErrs, fmt.Sprintf("Got %d calls to queueNoteFn%d(%v), expected %d", a, fn, inQueue, expect))
 		}
 	}
-	expectQNCounts = func(fn int, expectF, expectT int32) {
+	expectQNCounts := func(fn int, expectF, expectT int32) {
 		expectQNCount(fn, false, expectF)
 		expectQNCount(fn, true, expectT)
 	}
+	req1, _ := qs.StartRequest(ctx1, &fcrequest.WorkEstimate{Seats: 1}, 1, "", "fs1", "test", "one", queueNoteFn(1))
+	if req1 == nil {
+		t.Error("Request rejected")
+		return
+	}
+	expectQNCounts(1, 1, 1)
 	var executed1, idle1 bool
 	counter.Add(1)
 	go func() {
@@ -729,7 +726,7 @@ func TestContextCancel(t *testing.T) {
 				cancel2()
 				counter.Add(-1) // account completion of this goroutine
 			}()
-			req2, idle2a := qs.StartRequest(ctx2, &fcrequest.WorkEstimate{Seats: 1}, 2, "", "fs2", "test", "two", queueNoteFn2)
+			req2, idle2a := qs.StartRequest(ctx2, &fcrequest.WorkEstimate{Seats: 1}, 2, "", "fs2", "test", "two", queueNoteFn(2))
 			if idle2a {
 				t.Error("2nd StartRequest returned idle")
 			}
@@ -765,8 +762,8 @@ func TestContextCancel(t *testing.T) {
 	}
 }
 
-func countingPromiseMakerMaker(activeCounter counter.GoRoutineCounter) queueSetPromiseMakerMaker {
-	return func(qs *queueSet) queueSetPromiseMaker {
+func countingPromiseFactoryFactory(activeCounter counter.GoRoutineCounter) promiseFactoryFactory {
+	return func(qs *queueSet) promiseFactory {
 		return func(initial interface{}, doneCh <-chan struct{}, doneVal interface{}) promise.WriteOnce {
 			return testpromise.NewCountingWriteOnce(activeCounter, &qs.lock, initial, doneCh, doneVal)
 		}
@@ -778,7 +775,7 @@ func TestTotalRequestsExecutingWithPanic(t *testing.T) {
 	metrics.Reset()
 	now := time.Now()
 	clk, counter := fqclocktest.NewFakeEventClock(now, 0, nil)
-	qsf := newTestableQueueSetFactory(clk, countingPromiseMakerMaker(counter))
+	qsf := newTestableQueueSetFactory(clk, countingPromiseFactoryFactory(counter))
 	qCfg := fq.QueuingConfig{
 		Name:             "TestTotalRequestsExecutingWithPanic",
 		DesiredNumQueues: 0,

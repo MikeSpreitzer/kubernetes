@@ -25,7 +25,6 @@ import (
 
 	"k8s.io/utils/clock"
 
-	_ "k8s.io/apiserver/pkg/util/flowcontrol/counter" // hack to keep test code in vendor
 	"k8s.io/apiserver/pkg/util/flowcontrol/debug"
 	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
 	"k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing/promise"
@@ -46,17 +45,17 @@ const nsTimeFmt = "2006-01-02 15:04:05.000000000"
 // queueSetFactory implements the QueueSetFactory interface
 // queueSetFactory makes QueueSet objects.
 type queueSetFactory struct {
-	clock             clock.PassiveClock
-	promiseMakerMaker queueSetPromiseMakerMaker
+	clock                 clock.PassiveClock
+	promiseFactoryFactory promiseFactoryFactory
 }
 
-// queueSetPromiseMaker returns a WriteOnce
+// promiseFactory returns a WriteOnce
 // - whose Set method is invoked with the queueSet locked, and
 // - whose Get method is invoked with the queueSet not locked.
-type queueSetPromiseMaker func(initial interface{}, doneCh <-chan struct{}, doneVal interface{}) promise.WriteOnce
+type promiseFactory func(initial interface{}, doneCh <-chan struct{}, doneVal interface{}) promise.WriteOnce
 
-// queueSetPromiseMakerMaker returns the queueSetPromiseMaker to use for the given queueSet
-type queueSetPromiseMakerMaker func(*queueSet) queueSetPromiseMaker
+// promiseFactoryFactory returns the promiseFactory to use for the given queueSet
+type promiseFactoryFactory func(*queueSet) promiseFactory
 
 // `*queueSetCompleter` implements QueueSetCompleter.  Exactly one of
 // the fields `factory` and `theSet` is non-nil.
@@ -82,7 +81,7 @@ type queueSet struct {
 	estimatedServiceTime float64
 	obsPair              metrics.TimedObserverPair
 
-	promiseMaker queueSetPromiseMaker
+	promiseFactory promiseFactory
 
 	lock sync.Mutex
 
@@ -130,14 +129,14 @@ type queueSet struct {
 
 // NewQueueSetFactory creates a new QueueSetFactory object
 func NewQueueSetFactory(c clock.PassiveClock) fq.QueueSetFactory {
-	return newTestableQueueSetFactory(c, normalPromiseMakerMaker)
+	return newTestableQueueSetFactory(c, ordinaryPromiseFactoryFactory)
 }
 
 // newTestableQueueSetFactory creates a new QueueSetFactory object with the given connector between context cancel and wait cancel
-func newTestableQueueSetFactory(c clock.PassiveClock, promiseMakerMaker queueSetPromiseMakerMaker) fq.QueueSetFactory {
+func newTestableQueueSetFactory(c clock.PassiveClock, promiseFactoryFactory promiseFactoryFactory) fq.QueueSetFactory {
 	return &queueSetFactory{
-		clock:             c,
-		promiseMakerMaker: promiseMakerMaker,
+		clock:                 c,
+		promiseFactoryFactory: promiseFactoryFactory,
 	}
 }
 
@@ -178,7 +177,7 @@ func (qsc *queueSetCompleter) Complete(dCfg fq.DispatchingConfig) fq.QueueSet {
 			virtualTime:          0,
 			lastRealTime:         qsc.factory.clock.Now(),
 		}
-		qs.promiseMaker = qsc.factory.promiseMakerMaker(qs)
+		qs.promiseFactory = qsc.factory.promiseFactoryFactory(qs)
 	}
 	qs.setConfiguration(qsc.qCfg, qsc.dealer, dCfg)
 	return qs
@@ -255,7 +254,7 @@ const (
 // executing at each point where there is a change in that quantity,
 // because the metrics --- and only the metrics --- track that
 // quantity per FlowSchema.
-// The queueSet's promiseMaker is invoked once if the returns Request is non-nil,
+// The queueSet's promiseFactory is invoked once if the returns Request is non-nil,
 // not invoked if the Request is nil.
 func (qs *queueSet) StartRequest(ctx context.Context, workEstimate *fqrequest.WorkEstimate, hashValue uint64, flowDistinguisher, fsName string, descr1, descr2 interface{}, queueNoteFn fq.QueueNoteFn) (fq.Request, bool) {
 	qs.lockAndSyncTime()
@@ -306,7 +305,9 @@ func (qs *queueSet) StartRequest(ctx context.Context, workEstimate *fqrequest.Wo
 	return req, false
 }
 
-func normalPromiseMakerMaker(qs *queueSet) queueSetPromiseMaker {
+// This is the promiseFactoryFactory that a queueSetFactory would
+// ordinarily use.  Test code might use something different.
+func ordinaryPromiseFactoryFactory(qs *queueSet) promiseFactory {
 	return promise.NewWriteOnce
 }
 
@@ -454,7 +455,7 @@ func (qs *queueSet) timeoutOldRequestsAndRejectOrEnqueueLocked(ctx context.Conte
 		fsName:            fsName,
 		flowDistinguisher: flowDistinguisher,
 		ctx:               ctx,
-		decision:          qs.promiseMaker(nil, ctx.Done(), decisionCancel),
+		decision:          qs.promiseFactory(nil, ctx.Done(), decisionCancel),
 		arrivalTime:       qs.clock.Now(),
 		queue:             queue,
 		descr1:            descr1,
@@ -589,7 +590,7 @@ func (qs *queueSet) dispatchSansQueueLocked(ctx context.Context, workEstimate *f
 		flowDistinguisher: flowDistinguisher,
 		ctx:               ctx,
 		startTime:         now,
-		decision:          qs.promiseMaker(decisionExecute, ctx.Done(), decisionCancel),
+		decision:          qs.promiseFactory(decisionExecute, ctx.Done(), decisionCancel),
 		arrivalTime:       now,
 		descr1:            descr1,
 		descr2:            descr2,
