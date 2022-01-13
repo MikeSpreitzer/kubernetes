@@ -19,6 +19,7 @@ package apiserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -71,7 +72,7 @@ const resetFieldsStatusDefault = `{"status": {"conditions": [{"type": "MyStatus"
 var resetFieldsSkippedResources = map[string]struct{}{
 	// TODO: flowschemas is flaking,
 	// possible bug in the flowschemas controller.
-	"flowschemas": {},
+	//	"flowschemas": {},
 }
 
 // noConflicts is the set of reources for which
@@ -277,7 +278,22 @@ func TestApplyResetFields(t *testing.T) {
 						Namespace(namespace).
 						Patch(context.TODO(), name, types.ApplyPatchType, obj2YAML, metav1.PatchOptions{FieldManager: "fieldmanager2"}, "")
 					if err == nil || !strings.Contains(err.Error(), "conflict") {
-						t.Fatalf("expected conflict, got error %v", err)
+						var gotten string
+						obj3, err3 := dynamicClient.
+							Resource(mapping.Resource).
+							Namespace(namespace).
+							Get(context.TODO(), name, metav1.GetOptions{})
+						if err3 == nil {
+							marshBytes, marshErr := json.Marshal(obj3)
+							if marshErr == nil {
+								gotten = string(marshBytes)
+							} else {
+								gotten = fmt.Sprintf("<failed to json.Marshall(%#+v): %v>", obj3, marshErr)
+							}
+						} else {
+							gotten = fmt.Sprintf("<failed to Get object: %v>", err)
+						}
+						t.Fatalf("expected conflict in spec, got error %v; then Get returned %s", err, gotten)
 					}
 
 					// reapply first object to the status endpoint
@@ -287,7 +303,22 @@ func TestApplyResetFields(t *testing.T) {
 						Namespace(namespace).
 						Patch(context.TODO(), name, types.ApplyPatchType, obj1YAML, metav1.PatchOptions{FieldManager: "fieldmanager1"}, "status")
 					if err == nil || !strings.Contains(err.Error(), "conflict") {
-						t.Fatalf("expected conflict, got error %v", err)
+						var gotten string
+						obj3, err3 := dynamicClient.
+							Resource(mapping.Resource).
+							Namespace(namespace).
+							Get(context.TODO(), name, metav1.GetOptions{})
+						if err3 == nil {
+							marshBytes, marshErr := json.Marshal(obj3)
+							if marshErr == nil {
+								gotten = string(marshBytes)
+							} else {
+								gotten = fmt.Sprintf("<failed to json.Marshall(%#+v): %v>", obj3, marshErr)
+							}
+						} else {
+							gotten = fmt.Sprintf("<failed to Get object: %v>", err)
+						}
+						t.Fatalf("expected conflict in status, got error %v; then Get returned %s", err, gotten)
 					}
 				}
 
