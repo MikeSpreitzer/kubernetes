@@ -14,6 +14,7 @@ limitations under the License.
 package prometheusextension
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -88,12 +89,20 @@ func NewTestableTimingHistogram(clock clock.PassiveClock, opts TimingHistogramOp
 }
 
 func newTimingHistogram(clock clock.PassiveClock, desc *prometheus.Desc, opts TimingHistogramOpts, variableLabelValues ...string) (TimingHistogram, error) {
+	allLabelsM := prometheus.Labels{}
+	allLabelsS := prometheus.MakeLabelPairs(desc, variableLabelValues)
+	for _, pair := range allLabelsS {
+		if pair == nil || pair.Name == nil || pair.Value == nil {
+			return nil, errors.New("prometheus.MakeLabelPairs returned a nil")
+		}
+		allLabelsM[*pair.Name] = *pair.Value
+	}
 	weighted, err := NewWeightedHistogram(WeightedHistogramOpts{
 		Namespace:   opts.Namespace,
 		Subsystem:   opts.Subsystem,
 		Name:        opts.Name,
 		Help:        opts.Help,
-		ConstLabels: opts.ConstLabels,
+		ConstLabels: allLabelsM,
 		Buckets:     opts.Buckets,
 	})
 	if err != nil {
