@@ -26,34 +26,23 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
-// WeightedObserver
-type WeightedObserver interface {
-	// Set the variable to the given value.
-	Observe(value float64, weight uint64)
-}
-
+// WeightedHistogram generalizes Histogram: each observation has
+// an associated _weight_.  If every weight were 1, this would be
+// the same as the existing Histogram abstraction.
 type WeightedHistogram interface {
 	prometheus.Metric
 	prometheus.Collector
 	WeightedObserver
 }
 
-//
-type WeightedHistogramOpts struct {
-	Namespace   string
-	Subsystem   string
-	Name        string
-	Help        string
-	ConstLabels prometheus.Labels
-
-	// Buckets defines the buckets into which observations are
-	// accumulated. Each element in the slice is the upper
-	// inclusive bound of a bucket. The values must be sorted in
-	// strictly increasing order. There is no need to add a
-	// highest bucket with +Inf bound. The default value is
-	// prometheus.DefBuckets.
-	Buckets []float64
+// WeightedObserver generalizes the Observer interface.
+type WeightedObserver interface {
+	// Set the variable to the given value with the given weight.
+	ObserveWithWeight(value float64, weight uint64)
 }
+
+// WeightedHistogramOpts is the same as for an ordinary Histogram
+type WeightedHistogramOpts = prometheus.HistogramOpts
 
 // NewWeightedHistogram creates a new WeightedHistogram
 func NewWeightedHistogram(opts WeightedHistogramOpts) (WeightedHistogram, error) {
@@ -129,18 +118,16 @@ type weightedHistogram struct {
 // initialHotCount is the negative of the number of terms
 // that are summed into sumHot before it makes another term
 // of sumCold.
-const initialHotCount = -1000000
+const initialHotCount = -65535
 
 var _ WeightedHistogram = &weightedHistogram{}
+var _ prometheus.Metric = &weightedHistogram{}
+var _ prometheus.Collector = &weightedHistogram{}
 
-func (sh *weightedHistogram) Observe(value float64, weight uint64) {
+func (sh *weightedHistogram) ObserveWithWeight(value float64, weight uint64) {
 	idx := sort.SearchFloat64s(sh.upperBounds, value)
 	sh.lock.Lock()
 	defer sh.lock.Unlock()
-	sh.observeLocked(idx, value, weight)
-}
-
-func (sh *weightedHistogram) observeLocked(idx int, value float64, weight uint64) {
 	sh.buckets[idx] += weight
 	sh.sumHot += float64(weight) * value
 	sh.hotCount++
@@ -156,20 +143,20 @@ func (sh *weightedHistogram) Desc() *prometheus.Desc {
 }
 
 func (sh *weightedHistogram) Write(dest *dto.Metric) error {
-	cumCount, sum, buckets := func() (uint64, float64, map[float64]uint64) {
+	count, sum, buckets := func() (uint64, float64, map[float64]uint64) {
 		sh.lock.Lock()
 		defer sh.lock.Unlock()
 		nBounds := len(sh.upperBounds)
 		buckets := make(map[float64]uint64, nBounds)
-		var cumCount uint64
+		var count uint64
 		for idx, upperBound := range sh.upperBounds {
-			cumCount += sh.buckets[idx]
-			buckets[upperBound] = cumCount
+			count += sh.buckets[idx]
+			buckets[upperBound] = count
 		}
-		cumCount += sh.buckets[nBounds]
-		return cumCount, sh.sumHot + sh.sumCold, buckets
+		count += sh.buckets[nBounds]
+		return count, sh.sumHot + sh.sumCold, buckets
 	}()
-	metric, err := prometheus.NewConstHistogram(sh.desc, cumCount, sum, buckets, sh.variableLabelValues...)
+	metric, err := prometheus.NewConstHistogram(sh.desc, count, sum, buckets, sh.variableLabelValues...)
 	if err != nil {
 		return err
 	}

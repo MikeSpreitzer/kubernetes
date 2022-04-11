@@ -27,21 +27,23 @@ import (
 	"k8s.io/utils/clock"
 )
 
-// GaugeOps is the operations a user of a gauge can do to the gauge
+// GaugeOps is the part of `prometheus.Gauge` that is relevant to
+// instrumented code.
+// This factoring should be in prometheus, analogous to the way
+// it already factors out the Observer interface for histograms and summaries.
 type GaugeOps interface {
-	// Set sets the Gauge to the given value.
+	// Set is the same as Gauge.Set
 	Set(float64)
-	// Add(1)
+	// Inc is the same as Gauge.inc
 	Inc()
-	// Sub(1)
+	// Dec is the same as Gauge.Dec
 	Dec()
-	// Add adds the given value to the Gauge. (The value can be negative,
-	// resulting in a decrease of the Gauge.)
+	// Add is the same as Gauge.Add
 	Add(float64)
-	// Sub is the inverse of Add.
+	// Sub is the same as Gauge.Sub
 	Sub(float64)
 
-	// SetToCurrentTime sets the Gauge to the current Unix time in seconds.
+	// SetToCurrentTime the same as Gauge.SetToCurrentTime
 	SetToCurrentTime()
 }
 
@@ -166,7 +168,7 @@ func (th *timingHistogram) updateLocked(updateFn func(float64) float64) {
 	now := th.clock.Now()
 	delta := now.Sub(th.lastSetTime)
 	if delta > 0 {
-		th.weighted.Observe(th.value, uint64(delta))
+		th.weighted.ObserveWithWeight(th.value, uint64(delta))
 		th.lastSetTime = now
 	}
 	th.value = updateFn(th.value)
@@ -177,6 +179,7 @@ func (th *timingHistogram) Desc() *prometheus.Desc {
 }
 
 func (th *timingHistogram) Write(dest *dto.Metric) error {
+	th.Add(0) // account for time since last update
 	return th.weighted.Write(dest)
 }
 
@@ -185,6 +188,5 @@ func (th *timingHistogram) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (th *timingHistogram) Collect(ch chan<- prometheus.Metric) {
-	th.Add(0)
 	ch <- th
 }

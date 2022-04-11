@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-
 	dto "github.com/prometheus/client_model/go"
 
 	testclock "k8s.io/utils/clock/testing"
@@ -46,12 +45,17 @@ func TestTimingHistogramNonMonotonicBuckets(t *testing.T) {
 	}
 }
 
-var testBuckets = []float64{0, 0.5, 1}
-var value0 float64 = 0.25
+var thTestBuckets = []float64{0, 0.5, 1}
+var thTestV0 float64 = 0.25
 
-func exerciseTimingHistogram(th TimingHistogram, t0 time.Time, clk *testclock.FakePassiveClock) func(t *testing.T) {
+// exerciseTimingHistogram takes the given histogram through the following points in (time,value) space.
+// (t0,v0) where v0 = 0.25 and t0 is the clock time of the histogram's construction
+// (t1,v1) where v1 = 0.75 and t1 = t0 + 1 ns
+// (t2,v2) where v2 = 1.25 and t2 = t1 + 1 microsecond
+// (t3,v3) where v3 = 0.65 and t3 = t2 + 1 millisecond
+// (t4,v4) where v4 = 1.65 and t4 = t3 + 1 second
+func exerciseTimingHistogram(th GaugeOps, t0 time.Time, v0 float64, clk *testclock.FakePassiveClock, collect func(chan<- prometheus.Metric), expectCollection ...GaugeOps) func(t *testing.T) {
 	return func(t *testing.T) {
-		v0 := value0
 		t1 := t0.Add(time.Nanosecond)
 		var v1 float64 = 0.75
 		clk.SetTime(t1)
@@ -72,16 +76,28 @@ func exerciseTimingHistogram(th TimingHistogram, t0 time.Time, clk *testclock.Fa
 		th.Add(d3)
 		t4 := t3.Add(time.Second)
 		clk.SetTime(t4)
+		// th.Inc()
 
+		remainingCollection := expectCollection
 		metch := make(chan prometheus.Metric)
-		go th.Collect(metch)
-		collected := <-metch
-		if collected != th {
-			t.Error("Did not collect itself")
+		go func() {
+			collect(metch)
+			close(metch)
+		}()
+		for collected := range metch {
+			collectedGO := collected.(GaugeOps)
+			newRem, found := findAndRemove(remainingCollection, collectedGO)
+			if !found {
+				t.Errorf("Collected unexpected value %#+v", collected)
+			}
+			remainingCollection = newRem
 		}
-		close(metch)
+		if len(remainingCollection) > 0 {
+			t.Errorf("Collection omitted %#+v", remainingCollection)
+		}
 		metric := &dto.Metric{}
-		err := th.Write(metric)
+		writer := th.(prometheus.Metric)
+		err := writer.Write(metric)
 		if err != nil {
 			t.Error(err)
 		}
@@ -89,16 +105,16 @@ func exerciseTimingHistogram(th TimingHistogram, t0 time.Time, clk *testclock.Fa
 		if want, got := uint64(t4.Sub(t0)), wroteHist.GetSampleCount(); want != got {
 			t.Errorf("Wanted %v but got %v", want, got)
 		}
-		if want, got := float64(t1.Sub(t0))*v0+float64(t2.Sub(t1))*v1+float64(t3.Sub(t2))*v2+float64(t4.Sub(t3))*v3, wroteHist.GetSampleSum(); want != got {
+		if want, got := tDiff(t1, t0)*v0+tDiff(t2, t1)*v1+tDiff(t3, t2)*v2+tDiff(t4, t3)*v3, wroteHist.GetSampleSum(); want != got {
 			t.Errorf("Wanted %v but got %v", want, got)
 		}
 		wroteBuckets := wroteHist.GetBucket()
-		if len(wroteBuckets) != len(testBuckets) {
+		if len(wroteBuckets) != len(thTestBuckets) {
 			t.Errorf("Got buckets %#+v", wroteBuckets)
 		}
 		expectedCounts := []time.Duration{0, t1.Sub(t0), t2.Sub(t0) + t4.Sub(t3)}
-		for idx, ub := range testBuckets {
-			if want, got := wroteBuckets[idx].GetCumulativeCount(), uint64(expectedCounts[idx]); want != got {
+		for idx, ub := range thTestBuckets {
+			if want, got := uint64(expectedCounts[idx]), wroteBuckets[idx].GetCumulativeCount(); want != got {
 				t.Errorf("In bucket %d, wanted %v but got %v", idx, want, got)
 			}
 			if want, got := ub, wroteBuckets[idx].GetUpperBound(); want != got {
@@ -108,18 +124,59 @@ func exerciseTimingHistogram(th TimingHistogram, t0 time.Time, clk *testclock.Fa
 	}
 }
 
+// tDiff returns a time difference as float
+func tDiff(hi, lo time.Time) float64 { return float64(hi.Sub(lo)) }
+
+func findAndRemove(metrics []GaugeOps, seek GaugeOps) ([]GaugeOps, bool) {
+	for idx, metric := range metrics {
+		if metric == seek {
+			return append(append([]GaugeOps{}, metrics[:idx]...), metrics[idx+1:]...), true
+		}
+	}
+	return metrics, false
+}
+
 func TestTimeIntegration(t *testing.T) {
 	t0 := time.Now()
 	clk := testclock.NewFakePassiveClock(t0)
 	th, err := NewTestableTimingHistogram(clk, TimingHistogramOpts{
 		Name:         "TestTimeIntegration",
 		Help:         "helpless",
-		Buckets:      testBuckets,
-		InitialValue: value0,
+		Buckets:      thTestBuckets,
+		InitialValue: thTestV0,
 	})
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	t.Run("non-vec", exerciseTimingHistogram(th, t0, clk))
+	t.Run("non-vec", exerciseTimingHistogram(th, t0, thTestV0, clk, th.Collect, th))
+}
+
+func TestTimingHistogramVec(t *testing.T) {
+	t0 := time.Now()
+	clk := testclock.NewFakePassiveClock(t0)
+	vec := NewTestableTimingHistogramVec(clk, TimingHistogramOpts{
+		Name:         "TestTimeIntegration",
+		Help:         "helpless",
+		Buckets:      thTestBuckets,
+		InitialValue: thTestV0,
+	}, "k1", "k2")
+	th1 := vec.With(prometheus.Labels{"k1": "a", "k2": "x"})
+	th1b := vec.WithLabelValues("a", "x")
+	if th1 != th1b {
+		t.Errorf("Vector not functional")
+	}
+	t.Run("th1", exerciseTimingHistogram(th1, t0, thTestV0, clk, vec.Collect, th1))
+	t0 = clk.Now()
+	th2 := vec.WithLabelValues("a", "y")
+	if th1 == th2 {
+		t.Errorf("Vector does not distinguish label values")
+	}
+	t.Run("th2", exerciseTimingHistogram(th2, t0, thTestV0, clk, vec.Collect, th1, th2))
+	t0 = clk.Now()
+	th3 := vec.WithLabelValues("b", "y")
+	if th1 == th3 || th2 == th3 {
+		t.Errorf("Vector does not distinguish label values")
+	}
+	t.Run("th2", exerciseTimingHistogram(th3, t0, thTestV0, clk, vec.Collect, th1, th2, th3))
 }
