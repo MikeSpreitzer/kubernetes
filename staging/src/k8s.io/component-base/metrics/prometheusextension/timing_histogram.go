@@ -161,10 +161,6 @@ func (th *timingHistogram) SetToCurrentTime() {
 func (th *timingHistogram) update(updateFn func(float64) float64) {
 	th.lock.Lock()
 	defer th.lock.Unlock()
-	th.updateLocked(updateFn)
-}
-
-func (th *timingHistogram) updateLocked(updateFn func(float64) float64) {
 	now := th.clock.Now()
 	delta := now.Sub(th.lastSetTime)
 	if delta > 0 {
