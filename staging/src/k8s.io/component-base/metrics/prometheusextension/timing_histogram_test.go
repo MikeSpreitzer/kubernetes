@@ -49,11 +49,11 @@ var thTestBuckets = []float64{0, 0.5, 1}
 var thTestV0 float64 = 0.25
 
 // exerciseTimingHistogram takes the given histogram through the following points in (time,value) space.
-// (t0,v0) where v0 = 0.25 and t0 is the clock time of the histogram's construction
-// (t1,v1) where v1 = 0.75 and t1 = t0 + 1 ns
-// (t2,v2) where v2 = 1.25 and t2 = t1 + 1 microsecond
-// (t3,v3) where v3 = 0.65 and t3 = t2 + 1 millisecond
-// (t4,v4) where v4 = 1.65 and t4 = t3 + 1 second
+// t0 is the clock time of the histogram's construction
+// value=v0 for t0 <= t <= t1 where v0 = 0.25 and t1 = t0 + 1 ns
+// value=v1 for t1 <= t <= t2 where v1 = 0.75 and t2 = t1 + 1 microsecond
+// value=v2 for t2 <= t <= t3 where v2 = 1.25 and t3 = t2 + 1 millisecond
+// value=v3 for t3 <= t <= t4 where v3 = 0.65 and t4 = t3 + 1 second
 func exerciseTimingHistogram(th GaugeOps, t0 time.Time, v0 float64, clk *testclock.FakePassiveClock, collect func(chan<- prometheus.Metric), expectCollection ...GaugeOps) func(t *testing.T) {
 	return func(t *testing.T) {
 		t1 := t0.Add(time.Nanosecond)
@@ -76,7 +76,6 @@ func exerciseTimingHistogram(th GaugeOps, t0 time.Time, v0 float64, clk *testclo
 		th.Add(d3)
 		t4 := t3.Add(time.Second)
 		clk.SetTime(t4)
-		// th.Inc()
 
 		remainingCollection := expectCollection
 		metch := make(chan prometheus.Metric)

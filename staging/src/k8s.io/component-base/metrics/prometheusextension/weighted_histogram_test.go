@@ -87,14 +87,14 @@ func exerciseWeightedHistograms(t *testing.T, whSpecs ...weightedHistogramSpecFu
 			} else {
 				val = ub - 1
 			}
-			addWHOs(val, 1 /*+uint64(rand.Intn(1000000))*/, (2*idx+1)*m1, idx)
-			addWHOs(ub, 1 /*+uint64(rand.Intn(1000000))*/, (2*idx+2)*m1, idx)
+			addWHOs(val, 1+uint64(rand.Intn(1000000)), (2*idx+1)*m1, idx)
+			addWHOs(ub, 1+uint64(rand.Intn(1000000)), (2*idx+2)*m1, idx)
 		}
 		val := upperBounds[numUBs-1] + 1
 		if numUBs > 1 {
 			val = (3*upperBounds[numUBs-1] - upperBounds[numUBs-2]) / 2
 		}
-		addWHOs(val, 1 /*+uint64(rand.Intn(1000000))*/, (2*numUBs+1)*m1, numUBs)
+		addWHOs(val, 1+uint64(rand.Intn(1000000)), (2*numUBs+1)*m1, numUBs)
 		sort.Sort(terms)
 		for _, term := range terms {
 			ee.sum += term
@@ -170,8 +170,8 @@ func whosPick(whos []weightedHistogramObs) ([]weightedHistogramObs, weightedHist
 		return whos[:0], whos[0]
 	}
 	idx := rand.Intn(n)
-	var ans weightedHistogramObs
-	ans, whos[idx] = whos[idx], whos[n-1]
+	ans := whos[idx]
+	whos[idx] = whos[n-1]
 	return whos[:n-1], ans
 }
 
