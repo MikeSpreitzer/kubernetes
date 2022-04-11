@@ -27,8 +27,14 @@ import (
 )
 
 // WeightedHistogram generalizes Histogram: each observation has
-// an associated _weight_.  If every weight were 1, this would be
-// the same as the existing Histogram abstraction.
+// an associated _weight_. For a given `x` and `N`,
+// `1` call on `ObserveWithWeight(x, N)` has the same meaning as
+// `N` calls on `ObserveWithWeight(x, 1)`.
+// The weighted sum might differ slightly due to the use of
+// floating point, although the implementation takes some steps
+// to mitigate that.
+// If every weight were 1,
+// this would be the same as the existing Histogram abstraction.
 type WeightedHistogram interface {
 	prometheus.Metric
 	prometheus.Collector
