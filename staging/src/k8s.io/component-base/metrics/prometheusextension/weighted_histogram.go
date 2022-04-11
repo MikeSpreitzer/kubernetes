@@ -111,20 +111,22 @@ type weightedHistogram struct {
 	// sumHot + sumCold is the weighted sum of value.
 	// Rather than risk loss of precision in one
 	// float64, we do this sum hierarchically.  Many successive
-	// increments are added into sumHot, and once in a great while
-	// that is added into sumCold and reset to zero.
+	// increments are added into sumHot; once in a while
+	// the magnitude of sumHot is compared to the magnitude
+	// of sumCold and, if the ratio is high enough,
+	// sumHot is transferred into sumCold.
 	sumHot  float64
 	sumCold float64
 
-	// hotCount is used to decide when to dump sumHot into sumCold.
+	// hotCount is used to decide when to consider dumping sumHot into sumCold.
 	// hotCount counts upward from initialHotCount to zero.
 	hotCount int
 }
 
 // initialHotCount is the negative of the number of terms
-// that are summed into sumHot before it makes another term
-// of sumCold.
-const initialHotCount = -65535
+// that are summed into sumHot before considering whether
+// to transfer to sumCold.
+const initialHotCount = -100
 
 var _ WeightedHistogram = &weightedHistogram{}
 var _ prometheus.Metric = &weightedHistogram{}
@@ -135,12 +137,18 @@ func (sh *weightedHistogram) ObserveWithWeight(value float64, weight uint64) {
 	sh.lock.Lock()
 	defer sh.lock.Unlock()
 	sh.buckets[idx] += weight
-	sh.sumHot += float64(weight) * value
+	newSumHot := sh.sumHot + float64(weight)*value
 	sh.hotCount++
 	if sh.hotCount >= 0 {
-		sh.sumCold += sh.sumHot
-		sh.sumHot = 0
 		sh.hotCount = initialHotCount
+		if math.Abs(newSumHot) > math.Abs(sh.sumCold/67108864 /* that's 2^26 */) {
+			sh.sumCold += newSumHot
+			sh.sumHot = 0
+		} else {
+			sh.sumHot = newSumHot
+		}
+	} else {
+		sh.sumHot = newSumHot
 	}
 }
 

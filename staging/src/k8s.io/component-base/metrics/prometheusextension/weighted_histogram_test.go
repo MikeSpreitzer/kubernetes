@@ -47,8 +47,8 @@ type weightedHistogramSpecFunc func() (wh WeightedObserver, upperBounds []float6
 // For each histogram, with N upper bounds, the exercise provides two 2N+1 values:
 // the upper bounds and values halfway between them (extended below the bottom and above
 // the top).  For the Jth value, there are J*m1 calls to ObserveWithWeight with m1
-// chosen so that m1 * sum[1 <= J <= 2N+1] J is large enough to cause spills from
-// sumHot to sumCold.
+// chosen so that m1 * sum[1 <= J <= 2N+1] J is large enough to trigger consideration
+// of spilling from sumHot to sumCold.
 // The ObserveWithWeight calls to the various histograms are interleaved to check
 // that there is no interference between them.
 func exerciseWeightedHistograms(t *testing.T, whSpecs ...weightedHistogramSpecFunc) {
@@ -142,7 +142,7 @@ func exerciseWeightedHistograms(t *testing.T, whSpecs ...weightedHistogramSpecFu
 		actualSum := actualHist.GetSampleSum()
 		num := math.Abs(actualSum - ee.sum)
 		den := math.Max(math.Abs(actualSum), math.Abs(ee.sum))
-		if num > den/1e12 {
+		if num > den/1e14 {
 			t.Errorf("At idx=%d, expected sum %v but got %v, err=%v", idx, ee.sum, actualSum, actualSum-ee.sum)
 		}
 	}
