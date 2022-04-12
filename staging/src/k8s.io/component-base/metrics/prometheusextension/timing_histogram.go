@@ -159,15 +159,21 @@ func (th *timingHistogram) SetToCurrentTime() {
 }
 
 func (th *timingHistogram) update(updateFn func(float64) float64) {
-	th.lock.Lock()
-	defer th.lock.Unlock()
-	now := th.clock.Now()
-	delta := now.Sub(th.lastSetTime)
+	value, delta := func() (float64, time.Duration) {
+		th.lock.Lock()
+		defer th.lock.Unlock()
+		now := th.clock.Now()
+		delta := now.Sub(th.lastSetTime)
+		value := th.value
+		if delta > 0 {
+			th.lastSetTime = now
+		}
+		th.value = updateFn(value)
+		return value, delta
+	}()
 	if delta > 0 {
-		th.weighted.ObserveWithWeight(th.value, uint64(delta))
-		th.lastSetTime = now
+		th.weighted.ObserveWithWeight(value, uint64(delta))
 	}
-	th.value = updateFn(th.value)
 }
 
 func (th *timingHistogram) Desc() *prometheus.Desc {
