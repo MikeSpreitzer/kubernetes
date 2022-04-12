@@ -151,6 +151,22 @@ func TestTimeIntegration(t *testing.T) {
 	t.Run("non-vec", exerciseTimingHistogram(th, t0, thTestV0, clk, th.Collect, th))
 }
 
+func TestTimeIntegrationDirect(t *testing.T) {
+	t0 := time.Now()
+	clk := testclock.NewFakePassiveClock(t0)
+	th, err := NewTestableTimingHistogramDirect(clk, TimingHistogramOpts{
+		Name:         "TestTimeIntegration",
+		Help:         "helpless",
+		Buckets:      thTestBuckets,
+		InitialValue: thTestV0,
+	})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	t.Run("non-vec", exerciseTimingHistogram(th, t0, thTestV0, clk, th.Collect, th))
+}
+
 func TestTimingHistogramVec(t *testing.T) {
 	t0 := time.Now()
 	clk := testclock.NewFakePassiveClock(t0)
@@ -197,6 +213,28 @@ func BenchmarkTimingHistogram(b *testing.B) {
 	now := time.Now()
 	clk := &unsyncFakeClock{now: now}
 	hist, err := NewTestableTimingHistogram(clk, TimingHistogramOpts{
+		Namespace: "testns",
+		Subsystem: "testsubsys",
+		Name:      "testhist",
+		Help:      "Me",
+		Buckets:   []float64{1, 2, 4, 8, 16},
+	})
+	if err != nil {
+		b.Error(err)
+	}
+	var x int
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		clk.now = clk.now.Add(time.Duration(31-x) * time.Microsecond)
+		hist.Set(float64(x))
+		x = (x + i) % 23
+	}
+}
+func BenchmarkTimingHistogramDirect(b *testing.B) {
+	b.StopTimer()
+	now := time.Now()
+	clk := &unsyncFakeClock{now: now}
+	hist, err := NewTestableTimingHistogramDirect(clk, TimingHistogramOpts{
 		Namespace: "testns",
 		Subsystem: "testsubsys",
 		Name:      "testhist",

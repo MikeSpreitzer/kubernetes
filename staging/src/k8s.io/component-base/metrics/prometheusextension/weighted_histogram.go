@@ -61,7 +61,7 @@ func NewWeightedHistogram(opts WeightedHistogramOpts) (WeightedHistogram, error)
 	return newWeightedHistogram(desc, opts)
 }
 
-func newWeightedHistogram(desc *prometheus.Desc, opts WeightedHistogramOpts, variableLabelValues ...string) (WeightedHistogram, error) {
+func newWeightedHistogram(desc *prometheus.Desc, opts WeightedHistogramOpts, variableLabelValues ...string) (*weightedHistogram, error) {
 	if len(opts.Buckets) == 0 {
 		opts.Buckets = prometheus.DefBuckets
 	}
@@ -136,6 +136,15 @@ func (sh *weightedHistogram) ObserveWithWeight(value float64, weight uint64) {
 	idx := sort.SearchFloat64s(sh.upperBounds, value)
 	sh.lock.Lock()
 	defer sh.lock.Unlock()
+	sh.updateLocked(idx, value, weight)
+}
+
+func (sh *weightedHistogram) observeWithWeightLocked(value float64, weight uint64) {
+	idx := sort.SearchFloat64s(sh.upperBounds, value)
+	sh.updateLocked(idx, value, weight)
+}
+
+func (sh *weightedHistogram) updateLocked(idx int, value float64, weight uint64) {
 	sh.buckets[idx] += weight
 	newSumHot := sh.sumHot + float64(weight)*value
 	sh.hotCount++
