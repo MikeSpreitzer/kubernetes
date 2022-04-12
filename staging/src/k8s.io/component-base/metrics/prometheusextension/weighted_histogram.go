@@ -150,7 +150,7 @@ func (sh *weightedHistogram) updateLocked(idx int, value float64, weight uint64)
 	sh.hotCount++
 	if sh.hotCount >= 0 {
 		sh.hotCount = initialHotCount
-		if math.Abs(newSumHot) > math.Abs(sh.sumCold/67108864 /* that's 2^26 */) {
+		if math.Abs(newSumHot) > math.Abs(sh.sumCold/67108864 /* that's 2^26, about half the precision in a float64 */) {
 			sh.sumCold += newSumHot
 			sh.sumHot = 0
 		} else {

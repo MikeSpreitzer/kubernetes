@@ -159,7 +159,7 @@ func (th *timingHistogram) SetToCurrentTime() {
 }
 
 func (th *timingHistogram) update(updateFn func(float64) float64) {
-	value, delta := func() (float64, time.Duration) {
+	value, delta := func(th *timingHistogram) (float64, time.Duration) {
 		th.lock.Lock()
 		defer th.lock.Unlock()
 		now := th.clock.Now()
@@ -170,7 +170,7 @@ func (th *timingHistogram) update(updateFn func(float64) float64) {
 		}
 		th.value = updateFn(value)
 		return value, delta
-	}()
+	}(th)
 	if delta > 0 {
 		th.weighted.ObserveWithWeight(value, uint64(delta))
 	}
