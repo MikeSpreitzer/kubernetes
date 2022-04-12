@@ -22,27 +22,25 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-
-	"k8s.io/utils/clock"
 )
 
 // NewTimingHistogram creates a new TimingHistogram
 func NewTimingHistogramDirect(opts TimingHistogramOpts) (TimingHistogram, error) {
-	return NewTestableTimingHistogramDirect(clock.RealClock{}, opts)
+	return NewTestableTimingHistogramDirect(realNow, opts)
 }
 
 // NewTestableTimingHistogram creates a TimingHistogram that uses a mockable clock
-func NewTestableTimingHistogramDirect(clock clock.PassiveClock, opts TimingHistogramOpts) (TimingHistogram, error) {
+func NewTestableTimingHistogramDirect(nowFunc func() time.Time, opts TimingHistogramOpts) (TimingHistogram, error) {
 	desc := prometheus.NewDesc(
 		prometheus.BuildFQName(opts.Namespace, opts.Subsystem, opts.Name),
 		opts.Help,
 		nil,
 		opts.ConstLabels,
 	)
-	return newTimingHistogramDirect(clock, desc, opts)
+	return newTimingHistogramDirect(nowFunc, desc, opts)
 }
 
-func newTimingHistogramDirect(clock clock.PassiveClock, desc *prometheus.Desc, opts TimingHistogramOpts, variableLabelValues ...string) (TimingHistogram, error) {
+func newTimingHistogramDirect(nowFunc func() time.Time, desc *prometheus.Desc, opts TimingHistogramOpts, variableLabelValues ...string) (TimingHistogram, error) {
 	allLabelsM := prometheus.Labels{}
 	allLabelsS := prometheus.MakeLabelPairs(desc, variableLabelValues)
 	for _, pair := range allLabelsS {
@@ -63,15 +61,15 @@ func newTimingHistogramDirect(clock clock.PassiveClock, desc *prometheus.Desc, o
 		return nil, err
 	}
 	return &timingHistogramDirect{
-		clock:       clock,
+		nowFunc:     nowFunc,
 		weighted:    weighted,
-		lastSetTime: clock.Now(),
+		lastSetTime: nowFunc(),
 		value:       opts.InitialValue,
 	}, nil
 }
 
 type timingHistogramDirect struct {
-	clock    clock.PassiveClock
+	nowFunc  func() time.Time
 	weighted *weightedHistogram
 
 	// identifies when value was last set
@@ -102,13 +100,13 @@ func (th *timingHistogramDirect) Sub(delta float64) {
 }
 
 func (th *timingHistogramDirect) SetToCurrentTime() {
-	th.update(func(oldValue float64) float64 { return th.clock.Since(time.Unix(0, 0)).Seconds() })
+	th.update(func(oldValue float64) float64 { return th.nowFunc().Sub(time.Unix(0, 0)).Seconds() })
 }
 
 func (th *timingHistogramDirect) update(updateFn func(float64) float64) {
 	th.weighted.lock.Lock()
 	defer th.weighted.lock.Unlock()
-	now := th.clock.Now()
+	now := th.nowFunc()
 	delta := now.Sub(th.lastSetTime)
 	value := th.value
 	if delta > 0 {

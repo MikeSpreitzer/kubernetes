@@ -17,9 +17,9 @@ limitations under the License.
 package prometheusextension
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
+	"time"
 
-	"k8s.io/utils/clock"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // GaugeVecOps is a bunch of Gauge that have the same
@@ -40,11 +40,11 @@ type TimingHistogramVec struct {
 var _ GaugeVecOps = &TimingHistogramVec{}
 var _ prometheus.Collector = &TimingHistogramVec{}
 
-func NewTimingHistogramVec(clk clock.Clock, opts TimingHistogramOpts, labelNames ...string) *TimingHistogramVec {
-	return NewTestableTimingHistogramVec(clock.RealClock{}, opts, labelNames...)
+func NewTimingHistogramVec(opts TimingHistogramOpts, labelNames ...string) *TimingHistogramVec {
+	return NewTestableTimingHistogramVec(realNow, opts, labelNames...)
 }
 
-func NewTestableTimingHistogramVec(clk clock.PassiveClock, opts TimingHistogramOpts, labelNames ...string) *TimingHistogramVec {
+func NewTestableTimingHistogramVec(nowFunc func() time.Time, opts TimingHistogramOpts, labelNames ...string) *TimingHistogramVec {
 	desc := prometheus.NewDesc(
 		prometheus.BuildFQName(opts.Namespace, opts.Subsystem, opts.Name),
 		opts.Help,
@@ -53,7 +53,7 @@ func NewTestableTimingHistogramVec(clk clock.PassiveClock, opts TimingHistogramO
 	)
 	return &TimingHistogramVec{
 		MetricVec: prometheus.NewMetricVec(desc, func(lvs ...string) prometheus.Metric {
-			metric, err := newTimingHistogram(clk, desc, opts, lvs...)
+			metric, err := newTimingHistogram(nowFunc, desc, opts, lvs...)
 			if err != nil {
 				panic(err) // like in prometheus.newHistogram
 			}

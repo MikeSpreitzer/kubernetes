@@ -23,8 +23,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-
-	"k8s.io/utils/clock"
 )
 
 // GaugeOps is the part of `prometheus.Gauge` that is relevant to
@@ -79,21 +77,23 @@ type TimingHistogramOpts struct {
 
 // NewTimingHistogram creates a new TimingHistogram
 func NewTimingHistogram(opts TimingHistogramOpts) (TimingHistogram, error) {
-	return NewTestableTimingHistogram(clock.RealClock{}, opts)
+	return NewTestableTimingHistogram(realNow, opts)
 }
 
+func realNow() time.Time { return time.Now() }
+
 // NewTestableTimingHistogram creates a TimingHistogram that uses a mockable clock
-func NewTestableTimingHistogram(clock clock.PassiveClock, opts TimingHistogramOpts) (TimingHistogram, error) {
+func NewTestableTimingHistogram(nowFunc func() time.Time, opts TimingHistogramOpts) (TimingHistogram, error) {
 	desc := prometheus.NewDesc(
 		prometheus.BuildFQName(opts.Namespace, opts.Subsystem, opts.Name),
 		opts.Help,
 		nil,
 		opts.ConstLabels,
 	)
-	return newTimingHistogram(clock, desc, opts)
+	return newTimingHistogram(nowFunc, desc, opts)
 }
 
-func newTimingHistogram(clock clock.PassiveClock, desc *prometheus.Desc, opts TimingHistogramOpts, variableLabelValues ...string) (TimingHistogram, error) {
+func newTimingHistogram(nowFunc func() time.Time, desc *prometheus.Desc, opts TimingHistogramOpts, variableLabelValues ...string) (TimingHistogram, error) {
 	allLabelsM := prometheus.Labels{}
 	allLabelsS := prometheus.MakeLabelPairs(desc, variableLabelValues)
 	for _, pair := range allLabelsS {
@@ -114,15 +114,15 @@ func newTimingHistogram(clock clock.PassiveClock, desc *prometheus.Desc, opts Ti
 		return nil, err
 	}
 	return &timingHistogram{
-		clock:       clock,
+		nowFunc:     nowFunc,
 		weighted:    weighted,
-		lastSetTime: clock.Now(),
+		lastSetTime: nowFunc(),
 		value:       opts.InitialValue,
 	}, nil
 }
 
 type timingHistogram struct {
-	clock    clock.PassiveClock
+	nowFunc  func() time.Time
 	weighted WeightedHistogram
 
 	lock sync.Mutex // applies to all the following
@@ -155,14 +155,14 @@ func (th *timingHistogram) Sub(delta float64) {
 }
 
 func (th *timingHistogram) SetToCurrentTime() {
-	th.update(func(oldValue float64) float64 { return th.clock.Since(time.Unix(0, 0)).Seconds() })
+	th.update(func(oldValue float64) float64 { return th.nowFunc().Sub(time.Unix(0, 0)).Seconds() })
 }
 
 func (th *timingHistogram) update(updateFn func(float64) float64) {
 	value, delta := func(th *timingHistogram) (float64, time.Duration) {
 		th.lock.Lock()
 		defer th.lock.Unlock()
-		now := th.clock.Now()
+		now := th.nowFunc()
 		delta := now.Sub(th.lastSetTime)
 		value := th.value
 		if delta > 0 {

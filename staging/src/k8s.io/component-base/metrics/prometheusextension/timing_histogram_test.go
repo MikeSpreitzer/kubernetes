@@ -23,8 +23,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-
-	testclock "k8s.io/utils/clock/testing"
 )
 
 func TestTimingHistogramNonMonotonicBuckets(t *testing.T) {
@@ -45,7 +43,7 @@ func TestTimingHistogramNonMonotonicBuckets(t *testing.T) {
 	}
 }
 
-func exerciseTimingHistogramAndCollector(th GaugeOps, t0 time.Time, clk *testclock.FakePassiveClock, collect func(chan<- prometheus.Metric), expectCollection ...GaugeOps) func(t *testing.T) {
+func exerciseTimingHistogramAndCollector(th GaugeOps, t0 time.Time, clk *unsyncFakeClock, collect func(chan<- prometheus.Metric), expectCollection ...GaugeOps) func(t *testing.T) {
 	return func(t *testing.T) {
 		exerciseTimingHistogramData(t, th, t0, clk)
 		exerciseTimingHistogramCollector(t, collect, expectCollection)
@@ -81,7 +79,7 @@ var thTestV0 float64 = 0.25
 // value=v1 for t1 <= t <= t2 where v1 = 0.75 and t2 = t1 + 1 microsecond
 // value=v2 for t2 <= t <= t3 where v2 = 1.25 and t3 = t2 + 1 millisecond
 // value=v3 for t3 <= t <= t4 where v3 = 0.65 and t4 = t3 + 1 second
-func exerciseTimingHistogramData(t *testing.T, th GaugeOps, t0 time.Time, clk *testclock.FakePassiveClock) {
+func exerciseTimingHistogramData(t *testing.T, th GaugeOps, t0 time.Time, clk *unsyncFakeClock) {
 	t1 := t0.Add(time.Nanosecond)
 	v0 := thTestV0
 	var v1 float64 = 0.75
@@ -146,8 +144,8 @@ func findAndRemove(metrics []GaugeOps, seek GaugeOps) ([]GaugeOps, bool) {
 
 func TestTimeIntegration(t *testing.T) {
 	t0 := time.Now()
-	clk := testclock.NewFakePassiveClock(t0)
-	th, err := NewTestableTimingHistogram(clk, TimingHistogramOpts{
+	clk := &unsyncFakeClock{t0}
+	th, err := NewTestableTimingHistogram(clk.Now, TimingHistogramOpts{
 		Name:         "TestTimeIntegration",
 		Help:         "helpless",
 		Buckets:      thTestBuckets,
@@ -162,8 +160,8 @@ func TestTimeIntegration(t *testing.T) {
 
 func TestTimeIntegrationDirect(t *testing.T) {
 	t0 := time.Now()
-	clk := testclock.NewFakePassiveClock(t0)
-	th, err := NewTestableTimingHistogramDirect(clk, TimingHistogramOpts{
+	clk := &unsyncFakeClock{t0}
+	th, err := NewTestableTimingHistogramDirect(clk.Now, TimingHistogramOpts{
 		Name:         "TestTimeIntegration",
 		Help:         "helpless",
 		Buckets:      thTestBuckets,
@@ -178,8 +176,8 @@ func TestTimeIntegrationDirect(t *testing.T) {
 
 func TestTimingHistogramVec(t *testing.T) {
 	t0 := time.Now()
-	clk := testclock.NewFakePassiveClock(t0)
-	vec := NewTestableTimingHistogramVec(clk, TimingHistogramOpts{
+	clk := &unsyncFakeClock{t0}
+	vec := NewTestableTimingHistogramVec(clk.Now, TimingHistogramOpts{
 		Name:         "TestTimeIntegration",
 		Help:         "helpless",
 		Buckets:      thTestBuckets,
@@ -213,15 +211,15 @@ func (ufc *unsyncFakeClock) Now() time.Time {
 	return ufc.now
 }
 
-func (ufc *unsyncFakeClock) Since(b4 time.Time) time.Duration {
-	return ufc.now.Sub(b4)
+func (ufc *unsyncFakeClock) SetTime(now time.Time) {
+	ufc.now = now
 }
 
 func BenchmarkTimingHistogram(b *testing.B) {
 	b.StopTimer()
 	now := time.Now()
 	clk := &unsyncFakeClock{now: now}
-	hist, err := NewTestableTimingHistogram(clk, TimingHistogramOpts{
+	hist, err := NewTestableTimingHistogram(clk.Now, TimingHistogramOpts{
 		Namespace: "testns",
 		Subsystem: "testsubsys",
 		Name:      "testhist",
@@ -243,7 +241,7 @@ func BenchmarkTimingHistogramDirect(b *testing.B) {
 	b.StopTimer()
 	now := time.Now()
 	clk := &unsyncFakeClock{now: now}
-	hist, err := NewTestableTimingHistogramDirect(clk, TimingHistogramOpts{
+	hist, err := NewTestableTimingHistogramDirect(clk.Now, TimingHistogramOpts{
 		Namespace: "testns",
 		Subsystem: "testsubsys",
 		Name:      "testhist",
