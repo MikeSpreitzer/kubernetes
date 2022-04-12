@@ -90,10 +90,10 @@ func NewTestableTimingHistogram(nowFunc func() time.Time, opts TimingHistogramOp
 		nil,
 		opts.ConstLabels,
 	)
-	return newTimingHistogram(nowFunc, desc, opts)
+	return newTimingHistogramLayered(nowFunc, desc, opts)
 }
 
-func newTimingHistogram(nowFunc func() time.Time, desc *prometheus.Desc, opts TimingHistogramOpts, variableLabelValues ...string) (TimingHistogram, error) {
+func newTimingHistogramLayered(nowFunc func() time.Time, desc *prometheus.Desc, opts TimingHistogramOpts, variableLabelValues ...string) (TimingHistogram, error) {
 	allLabelsM := prometheus.Labels{}
 	allLabelsS := prometheus.MakeLabelPairs(desc, variableLabelValues)
 	for _, pair := range allLabelsS {
@@ -113,7 +113,7 @@ func newTimingHistogram(nowFunc func() time.Time, desc *prometheus.Desc, opts Ti
 	if err != nil {
 		return nil, err
 	}
-	return &timingHistogram{
+	return &timingHistogramLayered{
 		nowFunc:     nowFunc,
 		weighted:    weighted,
 		lastSetTime: nowFunc(),
@@ -121,7 +121,7 @@ func newTimingHistogram(nowFunc func() time.Time, desc *prometheus.Desc, opts Ti
 	}, nil
 }
 
-type timingHistogram struct {
+type timingHistogramLayered struct {
 	nowFunc  func() time.Time
 	weighted WeightedHistogram
 
@@ -132,34 +132,34 @@ type timingHistogram struct {
 	value       float64
 }
 
-var _ TimingHistogram = &timingHistogram{}
+var _ TimingHistogram = &timingHistogramLayered{}
 
-func (th *timingHistogram) Set(newValue float64) {
+func (th *timingHistogramLayered) Set(newValue float64) {
 	th.update(func(float64) float64 { return newValue })
 }
 
-func (th *timingHistogram) Inc() {
+func (th *timingHistogramLayered) Inc() {
 	th.update(func(oldValue float64) float64 { return oldValue + 1 })
 }
 
-func (th *timingHistogram) Dec() {
+func (th *timingHistogramLayered) Dec() {
 	th.update(func(oldValue float64) float64 { return oldValue - 1 })
 }
 
-func (th *timingHistogram) Add(delta float64) {
+func (th *timingHistogramLayered) Add(delta float64) {
 	th.update(func(oldValue float64) float64 { return oldValue + delta })
 }
 
-func (th *timingHistogram) Sub(delta float64) {
+func (th *timingHistogramLayered) Sub(delta float64) {
 	th.update(func(oldValue float64) float64 { return oldValue - delta })
 }
 
-func (th *timingHistogram) SetToCurrentTime() {
+func (th *timingHistogramLayered) SetToCurrentTime() {
 	th.update(func(oldValue float64) float64 { return th.nowFunc().Sub(time.Unix(0, 0)).Seconds() })
 }
 
-func (th *timingHistogram) update(updateFn func(float64) float64) {
-	value, delta := func(th *timingHistogram) (float64, time.Duration) {
+func (th *timingHistogramLayered) update(updateFn func(float64) float64) {
+	value, delta := func(th *timingHistogramLayered) (float64, time.Duration) {
 		th.lock.Lock()
 		defer th.lock.Unlock()
 		now := th.nowFunc()
@@ -176,19 +176,19 @@ func (th *timingHistogram) update(updateFn func(float64) float64) {
 	}
 }
 
-func (th *timingHistogram) Desc() *prometheus.Desc {
+func (th *timingHistogramLayered) Desc() *prometheus.Desc {
 	return th.weighted.Desc()
 }
 
-func (th *timingHistogram) Write(dest *dto.Metric) error {
+func (th *timingHistogramLayered) Write(dest *dto.Metric) error {
 	th.Add(0) // account for time since last update
 	return th.weighted.Write(dest)
 }
 
-func (th *timingHistogram) Describe(ch chan<- *prometheus.Desc) {
+func (th *timingHistogramLayered) Describe(ch chan<- *prometheus.Desc) {
 	ch <- th.weighted.Desc()
 }
 
-func (th *timingHistogram) Collect(ch chan<- prometheus.Metric) {
+func (th *timingHistogramLayered) Collect(ch chan<- prometheus.Metric) {
 	ch <- th
 }

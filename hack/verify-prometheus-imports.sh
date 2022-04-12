@@ -39,6 +39,7 @@ allowed_prometheus_importers=(
   ./cluster/images/etcd-version-monitor/etcd-version-monitor.go
   ./pkg/volume/util/operationexecutor/operation_generator_test.go
   ./staging/src/k8s.io/component-base/metrics/prometheusextension/timing_histogram.go
+  ./staging/src/k8s.io/component-base/metrics/prometheusextension/timing_histogram_direct.go
   ./staging/src/k8s.io/component-base/metrics/prometheusextension/timing_histogram_test.go
   ./staging/src/k8s.io/component-base/metrics/prometheusextension/timing_histogram_vec.go
   ./staging/src/k8s.io/component-base/metrics/prometheusextension/weighted_histogram.go

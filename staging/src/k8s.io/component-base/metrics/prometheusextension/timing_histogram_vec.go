@@ -53,7 +53,7 @@ func NewTestableTimingHistogramVec(nowFunc func() time.Time, opts TimingHistogra
 	)
 	return &TimingHistogramVec{
 		MetricVec: prometheus.NewMetricVec(desc, func(lvs ...string) prometheus.Metric {
-			metric, err := newTimingHistogram(nowFunc, desc, opts, lvs...)
+			metric, err := newTimingHistogramLayered(nowFunc, desc, opts, lvs...)
 			if err != nil {
 				panic(err) // like in prometheus.newHistogram
 			}
