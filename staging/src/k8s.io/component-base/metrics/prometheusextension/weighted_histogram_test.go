@@ -263,3 +263,40 @@ func TestWeightedHistogramVec(t *testing.T) {
 		gen2("b", "c"),
 	)
 }
+
+func BenchmarkWeightedHistogram(b *testing.B) {
+	b.StopTimer()
+	wh, err := NewWeightedHistogram(WeightedHistogramOpts{
+		Namespace: "testns",
+		Subsystem: "testsubsys",
+		Name:      "testhist",
+		Help:      "Me",
+		Buckets:   []float64{1, 2, 4, 8, 16},
+	})
+	if err != nil {
+		b.Error(err)
+	}
+	var x int
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		wh.ObserveWithWeight(float64(x), uint64(i)%32+1)
+		x = (x + i) % 20
+	}
+}
+
+func BenchmarkHistogram(b *testing.B) {
+	b.StopTimer()
+	hist := prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "testns",
+		Subsystem: "testsubsys",
+		Name:      "testhist",
+		Help:      "Me",
+		Buckets:   []float64{1, 2, 4, 8, 16},
+	})
+	var x int
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		hist.Observe(float64(x))
+		x = (x + i) % 20
+	}
+}

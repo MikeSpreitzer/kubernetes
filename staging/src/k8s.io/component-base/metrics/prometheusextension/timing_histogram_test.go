@@ -179,3 +179,38 @@ func TestTimingHistogramVec(t *testing.T) {
 	}
 	t.Run("th2", exerciseTimingHistogram(th3, t0, thTestV0, clk, vec.Collect, th1, th2, th3))
 }
+
+type unsyncFakeClock struct {
+	now time.Time
+}
+
+func (ufc *unsyncFakeClock) Now() time.Time {
+	return ufc.now
+}
+
+func (ufc *unsyncFakeClock) Since(b4 time.Time) time.Duration {
+	return ufc.now.Sub(b4)
+}
+
+func BenchmarkTimingHistogram(b *testing.B) {
+	b.StopTimer()
+	now := time.Now()
+	clk := &unsyncFakeClock{now: now}
+	hist, err := NewTestableTimingHistogram(clk, TimingHistogramOpts{
+		Namespace: "testns",
+		Subsystem: "testsubsys",
+		Name:      "testhist",
+		Help:      "Me",
+		Buckets:   []float64{1, 2, 4, 8, 16},
+	})
+	if err != nil {
+		b.Error(err)
+	}
+	var x int
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		clk.now = clk.now.Add(time.Duration(31-x) * time.Microsecond)
+		hist.Set(float64(x))
+		x = (x + i) % 23
+	}
+}
