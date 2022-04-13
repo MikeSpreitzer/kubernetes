@@ -142,10 +142,10 @@ func findAndRemove(metrics []GaugeOps, seek GaugeOps) ([]GaugeOps, bool) {
 	return metrics, false
 }
 
-func TestTimeIntegration(t *testing.T) {
+func TestTimeIntegrationLayered(t *testing.T) {
 	t0 := time.Now()
 	clk := &unsyncFakeClock{t0}
-	th, err := NewTestableTimingHistogram(clk.Now, TimingHistogramOpts{
+	th, err := NewTestableTimingHistogramLayered(clk.Now, TimingHistogramOpts{
 		Name:         "TestTimeIntegration",
 		Help:         "helpless",
 		Buckets:      thTestBuckets,
@@ -161,7 +161,7 @@ func TestTimeIntegration(t *testing.T) {
 func TestTimeIntegrationDirect(t *testing.T) {
 	t0 := time.Now()
 	clk := &unsyncFakeClock{t0}
-	th, err := NewTestableTimingHistogramDirect(clk.Now, TimingHistogramOpts{
+	th, err := NewTestableTimingHistogram(clk.Now, TimingHistogramOpts{
 		Name:         "TestTimeIntegration",
 		Help:         "helpless",
 		Buckets:      thTestBuckets,
@@ -215,11 +215,11 @@ func (ufc *unsyncFakeClock) SetTime(now time.Time) {
 	ufc.now = now
 }
 
-func BenchmarkTimingHistogram(b *testing.B) {
+func BenchmarkTimingHistogramLayered(b *testing.B) {
 	b.StopTimer()
 	now := time.Now()
 	clk := &unsyncFakeClock{now: now}
-	hist, err := NewTestableTimingHistogram(clk.Now, TimingHistogramOpts{
+	hist, err := NewTestableTimingHistogramLayered(clk.Now, TimingHistogramOpts{
 		Namespace: "testns",
 		Subsystem: "testsubsys",
 		Name:      "testhist",
@@ -241,7 +241,7 @@ func BenchmarkTimingHistogramDirect(b *testing.B) {
 	b.StopTimer()
 	now := time.Now()
 	clk := &unsyncFakeClock{now: now}
-	hist, err := NewTestableTimingHistogramDirect(clk.Now, TimingHistogramOpts{
+	hist, err := NewTestableTimingHistogram(clk.Now, TimingHistogramOpts{
 		Namespace: "testns",
 		Subsystem: "testsubsys",
 		Name:      "testhist",

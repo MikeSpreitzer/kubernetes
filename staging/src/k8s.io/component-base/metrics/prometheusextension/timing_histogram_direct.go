@@ -24,13 +24,65 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
-// NewTimingHistogram creates a new TimingHistogram
-func NewTimingHistogramDirect(opts TimingHistogramOpts) (TimingHistogram, error) {
-	return NewTestableTimingHistogramDirect(realNow, opts)
+// GaugeOps is the part of `prometheus.Gauge` that is relevant to
+// instrumented code.
+// This factoring should be in prometheus, analogous to the way
+// it already factors out the Observer interface for histograms and summaries.
+type GaugeOps interface {
+	// Set is the same as Gauge.Set
+	Set(float64)
+	// Inc is the same as Gauge.inc
+	Inc()
+	// Dec is the same as Gauge.Dec
+	Dec()
+	// Add is the same as Gauge.Add
+	Add(float64)
+	// Sub is the same as Gauge.Sub
+	Sub(float64)
+
+	// SetToCurrentTime the same as Gauge.SetToCurrentTime
+	SetToCurrentTime()
 }
 
+// A TimingHistogram tracks how long a `float64` variable spends in
+// ranges defined by buckets.  Time is counted in nanoseconds.  The
+// histogram's sum is the integral over time (in nanoseconds, from
+// creation of the histogram) of the variable's value.
+type TimingHistogram interface {
+	prometheus.Metric
+	prometheus.Collector
+	GaugeOps
+}
+
+// TimingHistogramOpts is the parameters of the TimingHistogram constructor
+type TimingHistogramOpts struct {
+	Namespace   string
+	Subsystem   string
+	Name        string
+	Help        string
+	ConstLabels prometheus.Labels
+
+	// Buckets defines the buckets into which observations are
+	// accumulated. Each element in the slice is the upper
+	// inclusive bound of a bucket. The values must be sorted in
+	// strictly increasing order. There is no need to add a
+	// highest bucket with +Inf bound. The default value is
+	// prometheus.DefBuckets.
+	Buckets []float64
+
+	// The initial value of the variable.
+	InitialValue float64
+}
+
+// NewTimingHistogram creates a new TimingHistogram
+func NewTimingHistogram(opts TimingHistogramOpts) (TimingHistogram, error) {
+	return NewTestableTimingHistogram(realNow, opts)
+}
+
+func realNow() time.Time { return time.Now() }
+
 // NewTestableTimingHistogram creates a TimingHistogram that uses a mockable clock
-func NewTestableTimingHistogramDirect(nowFunc func() time.Time, opts TimingHistogramOpts) (TimingHistogram, error) {
+func NewTestableTimingHistogram(nowFunc func() time.Time, opts TimingHistogramOpts) (TimingHistogram, error) {
 	desc := prometheus.NewDesc(
 		prometheus.BuildFQName(opts.Namespace, opts.Subsystem, opts.Name),
 		opts.Help,
@@ -72,8 +124,9 @@ type timingHistogramDirect struct {
 	nowFunc  func() time.Time
 	weighted *weightedHistogram
 
-	// identifies when value was last set
-	lastSetTime time.Time
+	// The following fields must only be accessed with weighted's lock held
+
+	lastSetTime time.Time // identifies when value was last set
 	value       float64
 }
 
