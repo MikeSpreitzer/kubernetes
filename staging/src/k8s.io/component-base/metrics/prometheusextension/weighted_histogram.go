@@ -89,7 +89,6 @@ func newWeightedHistogram(desc *prometheus.Desc, opts WeightedHistogramOpts, var
 		variableLabelValues: variableLabelValues,
 		upperBounds:         upperBounds,
 		buckets:             make([]uint64, len(upperBounds)+1),
-		hotCount:            initialHotCount,
 	}, nil
 }
 
@@ -110,25 +109,16 @@ type weightedHistogram struct {
 
 	// sumHot + sumCold is the weighted sum of value.
 	// Rather than risk loss of precision in one
-	// float64, we do this sum hierarchically.  Many successive
-	// increments are added into sumHot; once in a while
-	// the magnitude of sumHot is compared to the magnitude
-	// of sumCold and, if the ratio is high enough,
+	// float64, we do this sum hierarchically.  Some successive
+	// increments are added into sumHot; whenever the magnitude
+	// of sumHost is a sufficiently large fraction of the
+	// magnitude of sumCold,
 	// sumHot is transferred into sumCold.
 	sumHot  float64
 	sumCold float64
 
 	xferThresh float64 // = math.Abs(sumCold) / 2^26 (that's about half of the bits of precision in a float64)
-
-	// hotCount is used to decide when to consider dumping sumHot into sumCold.
-	// hotCount counts upward from initialHotCount to zero.
-	hotCount int
 }
-
-// initialHotCount is the negative of the number of terms
-// that are summed into sumHot before considering whether
-// to transfer to sumCold.
-const initialHotCount = -100
 
 var _ WeightedHistogram = &weightedHistogram{}
 var _ prometheus.Metric = &weightedHistogram{}
@@ -149,16 +139,12 @@ func (sh *weightedHistogram) observeWithWeightLocked(value float64, weight uint6
 func (sh *weightedHistogram) updateLocked(idx int, value float64, weight uint64) {
 	sh.buckets[idx] += weight
 	newSumHot := sh.sumHot + float64(weight)*value
-	sh.hotCount++
-	if sh.hotCount >= 0 {
-		sh.hotCount = initialHotCount
-		if math.Abs(newSumHot) > sh.xferThresh {
-			newSumCold := sh.sumCold + newSumHot
-			sh.sumCold = newSumCold
-			sh.xferThresh = math.Abs(newSumCold / 67108864)
-			sh.sumHot = 0
-			return
-		}
+	if math.Abs(newSumHot) > sh.xferThresh {
+		newSumCold := sh.sumCold + newSumHot
+		sh.sumCold = newSumCold
+		sh.xferThresh = math.Abs(newSumCold / 67108864)
+		sh.sumHot = 0
+		return
 	}
 	sh.sumHot = newSumHot
 }

@@ -60,7 +60,7 @@ func exerciseWeightedHistograms(t *testing.T, whSpecs ...weightedHistogramSpecFu
 		numUBs := len(upperBounds)
 		numWhos := numUBs*2 + 1
 		multSum := (numWhos * (numWhos + 1)) / 2
-		m1 := (-3 * initialHotCount) / multSum
+		m1 := (-300) / multSum
 		terms := Float64Slice{}
 		ee := whExerciseExpectation{wh: wh,
 			upperBounds: upperBounds,
