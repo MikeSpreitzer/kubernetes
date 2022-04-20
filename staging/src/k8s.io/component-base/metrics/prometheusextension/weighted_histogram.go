@@ -118,6 +118,8 @@ type weightedHistogram struct {
 	sumHot  float64
 	sumCold float64
 
+	xferThresh float64 // = math.Abs(sumCold) / 2^26 (that's about half of the bits of precision in a float64)
+
 	// hotCount is used to decide when to consider dumping sumHot into sumCold.
 	// hotCount counts upward from initialHotCount to zero.
 	hotCount int
@@ -150,15 +152,15 @@ func (sh *weightedHistogram) updateLocked(idx int, value float64, weight uint64)
 	sh.hotCount++
 	if sh.hotCount >= 0 {
 		sh.hotCount = initialHotCount
-		if math.Abs(newSumHot) > math.Abs(sh.sumCold/67108864 /* that's 2^26, about half the precision in a float64 */) {
-			sh.sumCold += newSumHot
+		if math.Abs(newSumHot) > sh.xferThresh {
+			newSumCold := sh.sumCold + newSumHot
+			sh.sumCold = newSumCold
+			sh.xferThresh = math.Abs(newSumCold / 67108864)
 			sh.sumHot = 0
-		} else {
-			sh.sumHot = newSumHot
+			return
 		}
-	} else {
-		sh.sumHot = newSumHot
 	}
+	sh.sumHot = newSumHot
 }
 
 func (sh *weightedHistogram) Desc() *prometheus.Desc {
