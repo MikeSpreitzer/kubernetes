@@ -29,8 +29,6 @@ import (
 )
 
 const (
-	samplesHistName       = "sawtestsamples"
-	samplingPeriod        = time.Millisecond
 	ddtRangeCentiPeriods  = 300
 	ddtOffsetCentiPeriods = 50
 	numIterations         = 100
@@ -38,7 +36,7 @@ const (
 
 var errMetricNotFound = errors.New("not found")
 
-/* TestSampler does a rough behavioral test of the sampling in a
+/* TestTimer does a rough behavioral test of the sampling in a
    SampleAndWatermarkHistograms.  The test creates one and exercises
    it, checking that the count in the sampling histogram is correct at
    each step.  The sampling histogram is expected to get one
@@ -52,20 +50,22 @@ var errMetricNotFound = errors.New("not found")
    The designed toleration is to pretend that the clock did not
    change, until it resumes net forward progress.
 */
-func TestSampler(t *testing.T) {
+func TestTimer(t *testing.T) {
 	t0 := time.Now()
 	clk := testclock.NewFakePassiveClock(t0)
 	buckets := []float64{0, 1}
-	gen := NewSampleAndWaterMarkHistogramsGenerator(clk, samplingPeriod,
-		&compbasemetrics.HistogramOpts{Name: samplesHistName, Buckets: buckets},
-		&compbasemetrics.HistogramOpts{Name: "marks", Buckets: buckets},
-		[]string{})
-	saw := gen.Generate(0, 1, []string{})
-	toRegister := gen.metrics()
+	samplingPeriod := time.Nanosecond
+	samplesHistName := "tro_test"
+	vec := NewTestableTimingRatioHistogramVec(clk.Now,
+		&compbasemetrics.TimingHistogramOpts{Name: samplesHistName, Buckets: buckets},
+	)
+	tro := vec.WithLabelValuesSafe(1)
+	toRegister := vec.metrics()
 	registry := compbasemetrics.NewKubeRegistry()
 	for _, reg := range toRegister {
 		registry.MustRegister(reg)
 	}
+	tro.Observe(1)
 	// `dt` is the admitted cumulative difference in fake time
 	// since the start of the test.  "admitted" means this is
 	// never allowed to decrease, which matches the designed
@@ -84,7 +84,7 @@ func TestSampler(t *testing.T) {
 			dt = diff
 		}
 		clk.SetTime(t1)
-		saw.Observe(1)
+		tro.Observe(1)
 		expectedCount := int64(dt / samplingPeriod)
 		actualCount, err := getHistogramCount(registry, samplesHistName)
 		if err != nil && !(err == errMetricNotFound && expectedCount == 0) {
