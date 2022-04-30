@@ -242,8 +242,7 @@ func TestApfExemptRequest(t *testing.T) {
 
 	checkForExpectedMetrics(t, []string{
 		"apiserver_current_inflight_requests",
-		"apiserver_flowcontrol_read_vs_write_request_count_watermarks",
-		"apiserver_flowcontrol_read_vs_write_request_count_samples",
+		"apiserver_flowcontrol_read_vs_write_requests_current",
 	})
 }
 
@@ -269,8 +268,7 @@ func TestApfExecuteRequest(t *testing.T) {
 	checkForExpectedMetrics(t, []string{
 		"apiserver_current_inflight_requests",
 		"apiserver_current_inqueue_requests",
-		"apiserver_flowcontrol_read_vs_write_request_count_watermarks",
-		"apiserver_flowcontrol_read_vs_write_request_count_samples",
+		"apiserver_flowcontrol_read_vs_write_requests_current",
 	})
 }
 
@@ -349,8 +347,7 @@ func TestApfExecuteMultipleRequests(t *testing.T) {
 	checkForExpectedMetrics(t, []string{
 		"apiserver_current_inflight_requests",
 		"apiserver_current_inqueue_requests",
-		"apiserver_flowcontrol_read_vs_write_request_count_watermarks",
-		"apiserver_flowcontrol_read_vs_write_request_count_samples",
+		"apiserver_flowcontrol_read_vs_write_requests_current",
 	})
 }
 

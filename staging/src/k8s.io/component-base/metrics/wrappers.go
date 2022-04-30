@@ -137,6 +137,15 @@ type ObserverMetric interface {
 	Observe(float64)
 }
 
+// RatioedGaugeMetric is a gauge for a ratio.
+// The primary interest is in varying the numerator, which is
+// done via the Gauge methods.
+// Occasionally the denominator is changed via the SetDenoinator method.
+type RatioedGaugeMetric interface {
+	GaugeMetric             // for controlling the numerator
+	SetDenominator(float64) // set the denominator
+}
+
 // PromRegistry is an interface which implements a subset of prometheus.Registerer and
 // prometheus.Gatherer interfaces
 type PromRegistry interface {
