@@ -106,7 +106,7 @@ var (
 	)
 	// PriorityLevelExecutionSeatsObserverVec creates observers of seats occupied throughout execution for priority levels
 	PriorityLevelExecutionSeatsObserverVec = NewTimingRatioHistogramVec(
-		&compbasemetrics.TimingHistogramOpts{
+		compbasemetrics.TimingHistogramOpts{
 			Namespace:      namespace,
 			Subsystem:      subsystem,
 			Name:           "priority_level_seat_utilization",
@@ -119,7 +119,7 @@ var (
 	)
 	// PriorityLevelConcurrencyObserverPairVec creates pairs that observe concurrency for priority levels
 	PriorityLevelConcurrencyObserverPairVec = NewTimingRatioHistogramPairVec(
-		&compbasemetrics.TimingHistogramOpts{
+		compbasemetrics.TimingHistogramOpts{
 			Namespace:      namespace,
 			Subsystem:      subsystem,
 			Name:           "priority_level_request_utilization",
@@ -131,7 +131,7 @@ var (
 	)
 	// readWriteConcurrencyObserverPairVec creates pairs that observe concurrency broken down by mutating vs readonly
 	readWriteConcurrencyObserverPairVec = NewTimingRatioHistogramPairVec(
-		&compbasemetrics.TimingHistogramOpts{
+		compbasemetrics.TimingHistogramOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "read_vs_write_requests_current",

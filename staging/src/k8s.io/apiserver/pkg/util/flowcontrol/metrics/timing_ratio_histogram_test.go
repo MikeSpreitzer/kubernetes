@@ -57,7 +57,7 @@ func TestTimer(t *testing.T) {
 	samplingPeriod := time.Nanosecond
 	samplesHistName := "tro_test"
 	vec := NewTestableTimingRatioHistogramVec(clk.Now,
-		&compbasemetrics.TimingHistogramOpts{Name: samplesHistName, Buckets: buckets},
+		compbasemetrics.TimingHistogramOpts{Name: samplesHistName, Buckets: buckets},
 	)
 	tro := vec.WithLabelValuesSafe(1)
 	toRegister := vec.metrics()

@@ -45,7 +45,7 @@ type RatioedObserverVec interface {
 	// WithLabelValues will return an error if this vec is not hidden and not yet registtered
 	WithLabelValues(initialDenominator float64, labelValues ...string) (RatioedObserver, error)
 
-	// WithLabelValuesSafe returns a RatioedObserver that, if not hidden, noop until registered
+	// WithLabelValuesSafe returns a RatioedObserver that, if not hidden, will noop until registered
 	// and always be relatively expensive to use.
 	WithLabelValuesSafe(initialDenominator float64, labelValues ...string) RatioedObserver
 }
@@ -66,7 +66,7 @@ type RatioedObserverPairVec interface {
 	// WithLabelValues will return an error if this pair is not hidden and not yet registtered
 	WithLabelValues(initialWaitingDenominator, initialExecutingDenominator float64, labelValues ...string) (RatioedObserverPair, error)
 
-	// WithLabelValuesSafe returns a RatioedObserverPair that, if not hidden, noop until registered
+	// WithLabelValuesSafe returns a RatioedObserverPair that, if not hidden, will noop until registered
 	// and always be relatively expensive to use.
 	WithLabelValuesSafe(initialWaitingDenominator, initialExecutingDenominator float64, labelValues ...string) RatioedObserverPair
 }

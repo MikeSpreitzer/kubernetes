@@ -206,11 +206,6 @@ type TimingHistogramOpts struct {
 	LabelValueAllowLists *MetricLabelAllowList
 }
 
-type TimingRatioHistogramOpts struct {
-	TimingHistogramOpts
-	InitialDenominator float64
-}
-
 // SummaryOpts bundles the options for creating a Summary metric. It is
 // mandatory to set Name to a non-empty string. While all other fields are
 // optional and can safely be left at their zero value, it is recommended to set
