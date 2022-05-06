@@ -24,7 +24,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/util/sets"
-	promext "k8s.io/component-base/metrics/prometheusextension"
 )
 
 var (
@@ -203,39 +202,8 @@ type TimingHistogramOpts struct {
 	Buckets              []float64
 	InitialValue         float64
 	DeprecatedVersion    string
-	deprecateOnce        sync.Once
-	annotateOnce         sync.Once
 	StabilityLevel       StabilityLevel
 	LabelValueAllowLists *MetricLabelAllowList
-}
-
-// Modify help description on the metric description.
-func (o *TimingHistogramOpts) markDeprecated() {
-	o.deprecateOnce.Do(func() {
-		o.Help = fmt.Sprintf("(Deprecated since %v) %v", o.DeprecatedVersion, o.Help)
-	})
-}
-
-// annotateStabilityLevel annotates help description on the metric description with the stability level
-// of the metric
-func (o *TimingHistogramOpts) annotateStabilityLevel() {
-	o.annotateOnce.Do(func() {
-		o.Help = fmt.Sprintf("[%v] %v", o.StabilityLevel, o.Help)
-	})
-}
-
-// convenience function to allow easy transformation to the prometheus
-// counterpart. This will do more once we have a proper label abstraction
-func (o *TimingHistogramOpts) toPromHistogramOpts() promext.TimingHistogramOpts {
-	return promext.TimingHistogramOpts{
-		Namespace:    o.Namespace,
-		Subsystem:    o.Subsystem,
-		Name:         o.Name,
-		Help:         o.Help,
-		ConstLabels:  o.ConstLabels,
-		Buckets:      o.Buckets,
-		InitialValue: o.InitialValue,
-	}
 }
 
 // SummaryOpts bundles the options for creating a Summary metric. It is

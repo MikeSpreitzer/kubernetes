@@ -32,14 +32,14 @@ func TestTimingHistogram(t *testing.T) {
 	v115 := semver.MustParse("1.15.0")
 	var tests = []struct {
 		desc string
-		*TimingHistogramOpts
+		TimingHistogramOpts
 		registryVersion     *semver.Version
 		expectedMetricCount int
 		expectedHelp        string
 	}{
 		{
 			desc: "Test non deprecated",
-			TimingHistogramOpts: &TimingHistogramOpts{
+			TimingHistogramOpts: TimingHistogramOpts{
 				Namespace:    "namespace",
 				Name:         "metric_test_name",
 				Subsystem:    "subsystem",
@@ -53,7 +53,7 @@ func TestTimingHistogram(t *testing.T) {
 		},
 		{
 			desc: "Test deprecated",
-			TimingHistogramOpts: &TimingHistogramOpts{
+			TimingHistogramOpts: TimingHistogramOpts{
 				Namespace:         "namespace",
 				Name:              "metric_test_name",
 				Subsystem:         "subsystem",
@@ -68,7 +68,7 @@ func TestTimingHistogram(t *testing.T) {
 		},
 		{
 			desc: "Test hidden",
-			TimingHistogramOpts: &TimingHistogramOpts{
+			TimingHistogramOpts: TimingHistogramOpts{
 				Namespace:         "namespace",
 				Name:              "metric_test_name",
 				Subsystem:         "subsystem",
@@ -154,7 +154,7 @@ func TestTimingHistogramVec(t *testing.T) {
 	v115 := semver.MustParse("1.15.0")
 	var tests = []struct {
 		desc string
-		*TimingHistogramOpts
+		TimingHistogramOpts
 		labels              []string
 		registryVersion     *semver.Version
 		expectedMetricCount int
@@ -162,7 +162,7 @@ func TestTimingHistogramVec(t *testing.T) {
 	}{
 		{
 			desc: "Test non deprecated",
-			TimingHistogramOpts: &TimingHistogramOpts{
+			TimingHistogramOpts: TimingHistogramOpts{
 				Namespace:    "namespace",
 				Name:         "metric_test_name",
 				Subsystem:    "subsystem",
@@ -177,7 +177,7 @@ func TestTimingHistogramVec(t *testing.T) {
 		},
 		{
 			desc: "Test deprecated",
-			TimingHistogramOpts: &TimingHistogramOpts{
+			TimingHistogramOpts: TimingHistogramOpts{
 				Namespace:         "namespace",
 				Name:              "metric_test_name",
 				Subsystem:         "subsystem",
@@ -193,7 +193,7 @@ func TestTimingHistogramVec(t *testing.T) {
 		},
 		{
 			desc: "Test hidden",
-			TimingHistogramOpts: &TimingHistogramOpts{
+			TimingHistogramOpts: TimingHistogramOpts{
 				Namespace:         "namespace",
 				Name:              "metric_test_name",
 				Subsystem:         "subsystem",
@@ -281,7 +281,7 @@ func TestTimingHistogramWithLabelValueAllowList(t *testing.T) {
 		"namespace_subsystem_metric_allowlist_test,label_a": "allowed",
 	}
 	labels := []string{"label_a", "label_b"}
-	opts := &TimingHistogramOpts{
+	opts := TimingHistogramOpts{
 		Namespace:    "namespace",
 		Name:         "metric_allowlist_test",
 		Subsystem:    "subsystem",
