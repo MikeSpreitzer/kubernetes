@@ -121,25 +121,29 @@ func getHistogramCount(registry compbasemetrics.KubeRegistry, metricName string)
 	return 0, errMetricNotFound
 }
 
-func BenchmarkSimpleRatioHistogram(b *testing.B) {
+func BenchmarkSimpleRatioHistogramVec(b *testing.B) {
 	b.StopTimer()
 	now := time.Now()
 	clk := testclock.NewFakePassiveClock(now)
-	wh := NewTestableTimingRatioHistogram(clk.Now, &TimingRatioHistogramOpts{
-		TimingHistogramOpts: compbasemetrics.TimingHistogramOpts{
+	whv := NewTestableTimingRatioHistogramVec(clk.Now,
+		&compbasemetrics.TimingHistogramOpts{
 			Namespace: "testns",
 			Subsystem: "testsubsys",
 			Name:      "testhist",
 			Help:      "Me",
 			Buckets:   []float64{1, 2, 4, 8, 16},
 		},
-		InitialDenominator: 3})
+		"labelname")
 	registry := compbasemetrics.NewKubeRegistry()
-	registry.MustRegister(wh)
+	registry.MustRegister(whv.metrics()...)
+	wh, err := whv.WithLabelValues(3, "labelvalue")
+	if err != nil {
+		b.Error(err)
+	}
 	var x int
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		delta := (i % 10) + 1
+		delta := (i % 6) + 1
 		now = now.Add(time.Duration(delta) * time.Millisecond)
 		clk.SetTime(now)
 		wh.Observe(float64(x))
