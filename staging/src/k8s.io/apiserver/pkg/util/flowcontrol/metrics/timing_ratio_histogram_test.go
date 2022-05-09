@@ -120,3 +120,78 @@ func getHistogramCount(registry compbasemetrics.KubeRegistry, metricName string)
 	}
 	return 0, errMetricNotFound
 }
+
+func BenchmarkSimpleRatioHistogram(b *testing.B) {
+	b.StopTimer()
+	now := time.Now()
+	clk := testclock.NewFakePassiveClock(now)
+	wh := NewTestableTimingRatioHistogram(clk.Now, &TimingRatioHistogramOpts{
+		TimingHistogramOpts: compbasemetrics.TimingHistogramOpts{
+			Namespace: "testns",
+			Subsystem: "testsubsys",
+			Name:      "testhist",
+			Help:      "Me",
+			Buckets:   []float64{1, 2, 4, 8, 16},
+		},
+		InitialDenominator: 3})
+	registry := compbasemetrics.NewKubeRegistry()
+	registry.MustRegister(wh)
+	var x int
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		now = now.Add(time.Duration(i) * time.Millisecond)
+		clk.SetTime(now)
+		wh.Observe(float64(x))
+		x = (x + i) % 60
+	}
+}
+
+func BenchmarkFullRatioHistogram(b *testing.B) {
+	b.StopTimer()
+	now := time.Now()
+	clk := testclock.NewFakePassiveClock(now)
+	wh := NewTestableTimingFullRatioHistogram(clk.Now, &TimingRatioHistogramOpts{
+		TimingHistogramOpts: compbasemetrics.TimingHistogramOpts{
+			Namespace: "testns",
+			Subsystem: "testsubsys",
+			Name:      "testhist",
+			Help:      "Me",
+			Buckets:   []float64{1, 2, 4, 8, 16},
+		},
+		InitialDenominator: 3})
+	registry := compbasemetrics.NewKubeRegistry()
+	registry.MustRegister(wh)
+	var x int
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		now = now.Add(time.Duration(i) * time.Millisecond)
+		clk.SetTime(now)
+		wh.Observe(float64(x))
+		x = (x + i) % 60
+	}
+}
+
+func BenchmarkBareRatioHistogram(b *testing.B) {
+	b.StopTimer()
+	now := time.Now()
+	clk := testclock.NewFakePassiveClock(now)
+	wh := NewTestableTimingBareRatioHistogram(clk.Now, &TimingRatioHistogramOpts{
+		TimingHistogramOpts: compbasemetrics.TimingHistogramOpts{
+			Namespace: "testns",
+			Subsystem: "testsubsys",
+			Name:      "testhist",
+			Help:      "Me",
+			Buckets:   []float64{1, 2, 4, 8, 16},
+		},
+		InitialDenominator: 3})
+	registry := compbasemetrics.NewKubeRegistry()
+	registry.MustRegister(wh)
+	var x int
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		now = now.Add(time.Duration(i) * time.Millisecond)
+		clk.SetTime(now)
+		wh.Observe(float64(x))
+		x = (x + i) % 60
+	}
+}
