@@ -23,6 +23,9 @@ const (
 )
 
 // Observer is something that can be given numeric observations.
+// TODO: Replace "Observer" in these names with "Gauge" to follow the
+// conventions in lower layers, where "Observer" implies sampling and
+// "Gauge" is for a variable (all values seen, no sampling).
 type Observer interface {
 	// Observe takes an observation
 	Observe(float64)
