@@ -147,7 +147,7 @@ func (s *EtcdOptions) AddFlags(fs *pflag.FlagSet) {
 		"have system defaults set by heuristics, others default to default-watch-cache-size")
 
 	fs.StringVar(&s.StorageConfig.Type, "storage-backend", s.StorageConfig.Type,
-		"The storage backend for persistence. Options: 'etcd3' (default).")
+		"The storage backend for persistence. Allowed values: "+strings.Join(storageTypes.List(), ", ")+"; default: etcd3.")
 
 	fs.StringSliceVar(&s.StorageConfig.Transport.ServerList, "etcd-servers", s.StorageConfig.Transport.ServerList,
 		"List of etcd servers to connect with (scheme://ip:port), comma separated.")
