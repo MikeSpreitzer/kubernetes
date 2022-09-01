@@ -62,12 +62,39 @@ type ThreadSafeStore interface {
 // threadSafeMap implements ThreadSafeStore
 type threadSafeMap struct {
 	lock  sync.RWMutex
-	items map[string]interface{}
+	items Map
 
 	// indexers maps a name to an IndexFunc
 	indexers Indexers
 	// indices maps a name to an Index
 	indices Indices
+}
+
+// Map maps a string to an interface{}.
+// Every operation is atomic (either it fully happens or does not do anything at all),
+// regardless of when and how the process running it terminates.
+// This interfaces is _not_ "thread safe";
+// rather, users should have only one call active at a time.
+// An implementation is allowed to support only certain concrete types of value for an `interface{}`.
+type Map interface {
+	Get(string) (interface{}, bool)
+	Put(string, interface{})
+
+	IsEmpty() bool
+
+	CheapLengthEstimate() int
+
+	// Enumerate invokes the given function on the entries in the Map in an
+	// unspecified order.  As soon as such a call returns a non-nil error,
+	// the enumeration stops and returns that error.  If no such call returns
+	// a non-nil error then the enumeration covers all entries and returns nil.
+	Enumerate(func(string, interface{}) error) error
+
+	Delete(string)
+
+	// Replace sets the contents to be the given map,
+	// wich is immutable
+	Replace(map[string]interface{})
 }
 
 func (c *threadSafeMap) Add(key string, obj interface{}) {
@@ -77,34 +104,35 @@ func (c *threadSafeMap) Add(key string, obj interface{}) {
 func (c *threadSafeMap) Update(key string, obj interface{}) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	oldObject := c.items[key]
-	c.items[key] = obj
+	oldObject, _ := c.items.Get(key)
+	c.items.Put(key, obj)
 	c.updateIndices(oldObject, obj, key)
 }
 
 func (c *threadSafeMap) Delete(key string) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	if obj, exists := c.items[key]; exists {
+	if obj, exists := c.items.Get(key); exists {
 		c.updateIndices(obj, nil, key)
-		delete(c.items, key)
+		c.items.Delete(key)
 	}
 }
 
 func (c *threadSafeMap) Get(key string) (item interface{}, exists bool) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
-	item, exists = c.items[key]
+	item, exists = c.items.Get(key)
 	return item, exists
 }
 
 func (c *threadSafeMap) List() []interface{} {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
-	list := make([]interface{}, 0, len(c.items))
-	for _, item := range c.items {
+	list := make([]interface{}, 0, c.items.CheapLengthEstimate())
+	c.items.Enumerate(func(_ string, item interface{}) error {
 		list = append(list, item)
-	}
+		return nil
+	})
 	return list
 }
 
@@ -113,21 +141,22 @@ func (c *threadSafeMap) List() []interface{} {
 func (c *threadSafeMap) ListKeys() []string {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
-	list := make([]string, 0, len(c.items))
-	for key := range c.items {
+	list := make([]string, 0, c.items.CheapLengthEstimate())
+	c.items.Enumerate(func(key string, _ interface{}) error {
 		list = append(list, key)
-	}
+		return nil
+	})
 	return list
 }
 
 func (c *threadSafeMap) Replace(items map[string]interface{}, resourceVersion string) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	c.items = items
+	c.items.Replace(items)
 
 	// rebuild any index
 	c.indices = Indices{}
-	for key, item := range c.items {
+	for key, item := range items {
 		c.updateIndices(nil, item, key)
 	}
 }
@@ -167,7 +196,8 @@ func (c *threadSafeMap) Index(indexName string, obj interface{}) ([]interface{},
 
 	list := make([]interface{}, 0, storeKeySet.Len())
 	for storeKey := range storeKeySet {
-		list = append(list, c.items[storeKey])
+		item, _ := c.items.Get(storeKey)
+		list = append(list, item)
 	}
 	return list, nil
 }
@@ -187,7 +217,8 @@ func (c *threadSafeMap) ByIndex(indexName, indexedValue string) ([]interface{}, 
 	set := index[indexedValue]
 	list := make([]interface{}, 0, set.Len())
 	for key := range set {
-		list = append(list, c.items[key])
+		item, _ := c.items.Get(key)
+		list = append(list, item)
 	}
 
 	return list, nil
@@ -230,7 +261,7 @@ func (c *threadSafeMap) AddIndexers(newIndexers Indexers) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	if len(c.items) > 0 {
+	if !c.items.IsEmpty() {
 		return fmt.Errorf("cannot add indexers to running index")
 	}
 
@@ -325,7 +356,7 @@ func (c *threadSafeMap) Resync() error {
 // NewThreadSafeStore creates a new instance of ThreadSafeStore.
 func NewThreadSafeStore(indexers Indexers, indices Indices) ThreadSafeStore {
 	return &threadSafeMap{
-		items:    map[string]interface{}{},
+		items:    NewMapInMemory(),
 		indexers: indexers,
 		indices:  indices,
 	}
