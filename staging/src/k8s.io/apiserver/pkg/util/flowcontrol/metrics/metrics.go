@@ -226,7 +226,7 @@ var (
 			Namespace:      namespace,
 			Subsystem:      subsystem,
 			Name:           "request_concurrency_limit",
-			Help:           "Shared concurrency limit in the API Priority and Fairness subsystem",
+			Help:           "Nominal number of execution seats configured for each priority level",
 			StabilityLevel: compbasemetrics.ALPHA,
 		},
 		[]string{priorityLevel},
