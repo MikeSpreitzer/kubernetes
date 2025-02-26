@@ -769,7 +769,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 	}
 
 	validChangesInExemptFieldOfExemptPLFn := func() flowcontrol.PriorityLevelConfigurationSpec {
-		have, _ := internalbootstrap.MandatoryPriorityLevelConfigurations[flowcontrol.PriorityLevelConfigurationNameExempt]
+		have := internalbootstrap.MandatoryPriorityLevelConfigurations[true][flowcontrol.PriorityLevelConfigurationNameExempt]
 		return flowcontrol.PriorityLevelConfigurationSpec{
 			Type: flowcontrol.PriorityLevelEnablementExempt,
 			Exempt: &flowcontrol.ExemptPriorityLevelConfiguration{
