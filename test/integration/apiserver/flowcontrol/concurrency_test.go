@@ -30,10 +30,14 @@ import (
 
 	flowcontrol "k8s.io/api/flowcontrol/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/component-base/featuregate"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app/options"
+	"k8s.io/kubernetes/pkg/controlplane"
+	apfreg "k8s.io/kubernetes/pkg/registry/flowcontrol/rest"
 	"k8s.io/kubernetes/test/integration/framework"
 	"k8s.io/kubernetes/test/utils/ktesting"
 	"k8s.io/utils/ptr"
@@ -47,30 +51,53 @@ const (
 	timeout                           = time.Second * 10
 )
 
-func setup(t testing.TB, maxReadonlyRequestsInFlight, maxMutatingRequestsInFlight int) (context.Context, *rest.Config, framework.TearDownFunc) {
+func setup(t testing.TB, maxReadonlyRequestsInFlight, maxMutatingRequestsInFlight int, v134Config bool) (ktesting.TContext, clientset.Interface, *rest.Config, framework.TearDownFunc) {
 	tCtx := ktesting.Init(t)
+	client, kubeConfig, tearDownFn := setupAnother(t, tCtx, maxReadonlyRequestsInFlight, maxMutatingRequestsInFlight, false, v134Config)
+	newTeardown := func() {
+		tCtx.Cancel("tearing down apiserver")
+		tearDownFn()
+	}
+	return tCtx, client, kubeConfig, newTeardown
+}
 
-	_, kubeConfig, tearDownFn := framework.StartTestServer(tCtx, t, framework.TestServerSetup{
+func setupAnother(t testing.TB, ctx context.Context, maxReadonlyRequestsInFlight, maxMutatingRequestsInFlight int, disableConfigProvider bool, v134Config bool) (clientset.Interface, *rest.Config, framework.TearDownFunc) {
+	client, kubeConfig, tearDownFn := framework.StartTestServer(ctx, t, framework.TestServerSetup{
 		ModifyServerRunOptions: func(opts *options.ServerRunOptions) {
 			// Ensure all clients are allowed to send requests.
 			opts.Authorization.Modes = []string{"AlwaysAllow"}
 			opts.GenericServerRunOptions.MaxRequestsInFlight = maxReadonlyRequestsInFlight
 			opts.GenericServerRunOptions.MaxMutatingRequestsInFlight = maxMutatingRequestsInFlight
 		},
+		ModifyServerConfig: func(c *controlplane.Config) {
+			fg := c.ControlPlane.Generic.FeatureGate
+			switch typed := fg.(type) {
+			case featuregate.MutableFeatureGate:
+				err := typed.Set(fmt.Sprintf("APFv134Config=%v", v134Config))
+				if err != nil {
+					t.Errorf("Failed to turn on APFv134Config Feature: %s", err.Error())
+				}
+			default:
+				t.Error("Unable to turn on APFv134Config Feature due to immutable FeatureGate")
+			}
+			if disableConfigProvider {
+				disabledHooks := c.ControlPlane.Generic.DisabledPostStartHooks
+				if disabledHooks == nil {
+					disabledHooks = sets.NewString()
+					c.ControlPlane.Generic.DisabledPostStartHooks = disabledHooks
+				}
+				disabledHooks.Insert(apfreg.PostStartHookName)
+			}
+		},
 	})
 
-	newTeardown := func() {
-		tCtx.Cancel("tearing down apiserver")
-		tearDownFn()
-	}
-	return tCtx, kubeConfig, newTeardown
+	return client, kubeConfig, tearDownFn
 }
 
 func TestPriorityLevelIsolation(t *testing.T) {
-	ctx, kubeConfig, closeFn := setup(t, 1, 1)
+	ctx, loopbackClient, kubeConfig, closeFn := setup(t, 1, 1, true)
 	defer closeFn()
 
-	loopbackClient := clientset.NewForConfigOrDie(kubeConfig)
 	noxu1Client := getClientFor(kubeConfig, "noxu1")
 	noxu2Client := getClientFor(kubeConfig, "noxu2")
 
